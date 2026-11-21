@@ -43,7 +43,7 @@ STATUS_FILE = DATA_DIR / "status.json"
 ENC_LISTINGS_FILE = DATA_DIR / "listings.enc.json"  # šifrovaná verzia (AES-GCM, heslo SITE_PASSWORD)
 ENC_STATUS_FILE = DATA_DIR / "status.enc.json"
 SITE_PASSWORD = os.getenv("SITE_PASSWORD", "")
-PBKDF2_ITER = 600_000
+PBKDF2_ITER = 200_000
 STATE_FILE = DATA_DIR / "state.json"   # počítadlá chýb zdrojov
 
 SITE_URL = os.getenv("SITE_URL", "")
@@ -68,10 +68,28 @@ def _key(password: str, salt: bytes, iterations: int) -> bytes:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations, dklen=32)
 
 
+_SALT: bytes | None = None
+
+
+def _shared_salt() -> bytes:
+    """Jedna soľ pre všetky súbory → prehliadač odvodzuje kľúč len raz."""
+    global _SALT
+    if _SALT is None:
+        import base64
+        try:
+            d = json.loads(ENC_LISTINGS_FILE.read_text("utf-8"))
+            if d.get("iter") == PBKDF2_ITER:
+                _SALT = base64.b64decode(d["salt"])
+        except Exception:  # noqa: BLE001
+            pass
+        _SALT = _SALT or os.urandom(16)
+    return _SALT
+
+
 def encrypt_json(obj) -> str:
     import base64
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    salt, iv = os.urandom(16), os.urandom(12)
+    salt, iv = _shared_salt(), os.urandom(12)
     ct = AESGCM(_key(SITE_PASSWORD, salt, PBKDF2_ITER)).encrypt(iv, json.dumps(obj, ensure_ascii=False).encode(), None)
     b = lambda x: base64.b64encode(x).decode()  # noqa: E731
     return json.dumps({"v": 1, "iter": PBKDF2_ITER, "salt": b(salt), "iv": b(iv), "ct": b(ct)})
@@ -101,7 +119,13 @@ def load_listings() -> list[dict] | None:
 
 def save_data(listings: list[dict], status: dict, changed: bool):
     if SITE_PASSWORD:
-        if changed or not ENC_LISTINGS_FILE.exists():
+        old_iter = None
+        if ENC_LISTINGS_FILE.exists():
+            try:
+                old_iter = json.loads(ENC_LISTINGS_FILE.read_text("utf-8")).get("iter")
+            except Exception:  # noqa: BLE001
+                pass
+        if changed or old_iter != PBKDF2_ITER:
             ENC_LISTINGS_FILE.write_text(encrypt_json(listings), "utf-8")
         ENC_STATUS_FILE.write_text(encrypt_json(status), "utf-8")
         for f in (LISTINGS_FILE, STATUS_FILE):  # nešifrované verzie zmazať
