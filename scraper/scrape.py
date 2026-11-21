@@ -30,7 +30,7 @@ import requests
 from bs4 import BeautifulSoup
 
 # ---------------------------------------------------------------- nastavenia
-MAX_PRICE = int(os.getenv("MAX_PRICE", "680"))   # €/mesiac – horná hranica
+MAX_PRICE = int(os.getenv("MAX_PRICE", "700"))   # €/mesiac – horná hranica
 GOOD_PRICE = int(os.getenv("GOOD_PRICE", "650"))  # pod touto cenou = „dobrá cena“
 MIN_PRICE = 200                                    # nižšie ceny sú zvyčajne nezmysel/izby
 KEEP_GONE_DAYS = 14                                # ako dlho držať zmiznuté inzeráty
@@ -754,6 +754,8 @@ def main():
     listings = sorted(merged.values(), key=lambda x: x["first_seen"], reverse=True)
     prev_initialized = set(state["initialized"])
     state["initialized"] = sorted(prev_initialized | ok_sources)
+    old_max = state.get("max_price", 680)
+    state["max_price"] = MAX_PRICE
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1), "utf-8")
     status["active"] = sum(1 for x in listings if x.get("active") and not x.get("dup_of"))
     changed = json.dumps(listings, ensure_ascii=False, sort_keys=True) != old_json
@@ -770,6 +772,12 @@ def main():
         if fresh_sources:
             log("Prvý úspešný beh zdrojov (bez upozornení):", ", ".join(sorted(fresh_sources)))
         new_items = [x for x in new_items if x["source"] not in fresh_sources]
+        # po zvýšení cenového limitu neposielať naraz všetky staršie drahšie ponuky
+        if MAX_PRICE > old_max:
+            skipped = [x for x in new_items if (x.get("price") or 0) > old_max]
+            if skipped:
+                log(f"Nový limit {MAX_PRICE} €: {len(skipped)} existujúcich ponúk nad {old_max} € bez upozornenia")
+            new_items = [x for x in new_items if (x.get("price") or 0) <= old_max]
         new_items.sort(key=lambda x: x.get("price") or 9999)
         log(f"Nové/zlacnené: {len(new_items)}")
         notify_new(new_items)
