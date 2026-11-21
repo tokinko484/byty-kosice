@@ -41,10 +41,18 @@
   .icon.on{background:#fde68a;border-color:#f59e0b}
   .also{font-size:12px}.also a{color:var(--acc)}
   .empty{grid-column:1/-1;text-align:center;color:var(--mute);padding:40px 10px}
+  #lock{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px}
+  #lock form{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;width:100%;max-width:320px;text-align:center}
+  #lock input{width:100%;font:inherit;font-size:22px;letter-spacing:6px;text-align:center;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);margin:12px 0}
+  #lock button{width:100%;border:0;border-radius:10px;padding:11px;background:var(--acc);color:#fff;font:inherit;font-weight:600}
+  #lock .err{color:var(--bad);font-size:13px;min-height:18px;margin-top:8px}
   footer{text-align:center;color:var(--mute);font-size:12px;padding:10px 12px 30px}
 </style>
 </head>
 <body>
+<div id="lock" hidden><form id="lockform"><div style="font-size:36px">🔒</div><b>Byty Košice</b>
+  <input id="pw" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Heslo" autofocus>
+  <button type="submit">Otvoriť</button><div class="err" id="pwerr"></div></form></div>
 <header>
   <h1>🏠 Byty Košice <small id="count"></small></h1>
   <div class="status" id="status">Načítavam…</div>
@@ -132,12 +140,45 @@ document.addEventListener('click', e => {
   if (o){ seen.add(o.dataset.id); store.set('seen', [...seen]); setTimeout(render, 300); }
 });
 
+const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const keyCache = {};
+async function decrypt(enc, pw){
+  const ck = enc.salt + enc.iter;
+  if (!keyCache[ck]){
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+    keyCache[ck] = await crypto.subtle.deriveKey({name:'PBKDF2', salt:b64(enc.salt), iterations:enc.iter, hash:'SHA-256'},
+      base, {name:'AES-GCM', length:256}, false, ['decrypt']);
+  }
+  const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:b64(enc.iv)}, keyCache[ck], b64(enc.ct));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+let PW = store.get('pw', '');
+async function fetchData(){
+  const get = u => fetch(u + '?t=' + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null);
+  const encL = await get('data/listings.enc.json');
+  if (!encL){ // nešifrovaná verzia (pred nastavením hesla)
+    return [await get('data/listings.json') || [], await get('data/status.json')];
+  }
+  if (!PW) throw 'locked';
+  const encS = await get('data/status.enc.json');
+  return [await decrypt(encL, PW), encS ? await decrypt(encS, PW).catch(() => null) : null];
+}
+function showLock(msg){
+  document.getElementById('lock').hidden = false;
+  document.getElementById('pwerr').textContent = msg || '';
+  document.getElementById('pw').focus();
+}
+document.getElementById('lockform').addEventListener('submit', async e => {
+  e.preventDefault();
+  PW = document.getElementById('pw').value.trim();
+  document.getElementById('pwerr').textContent = 'Overujem…';
+  if (await load()){ store.set('pw', PW); document.getElementById('lock').hidden = true; }
+});
 async function load(){
+  let l, s;
+  try{ [l, s] = await fetchData(); }
+  catch(e){ PW = ''; showLock(e === 'locked' ? '' : 'Nesprávne heslo'); return false; }
   try{
-    const [l, s] = await Promise.all([
-      fetch('data/listings.json?t=' + Date.now()).then(r => r.ok ? r.json() : []),
-      fetch('data/status.json?t=' + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null)
-    ]);
     DATA = l; STATUS = s;
     const stEl = document.getElementById('status');
     if (s){
@@ -146,6 +187,7 @@ async function load(){
     } else stEl.textContent = 'Zatiaľ bez kontroly';
     render();
   }catch(e){ document.getElementById('status').textContent = 'Nepodarilo sa načítať dáta.'; }
+  return true;
 }
 load();
 setInterval(load, 5 * 60e3);
