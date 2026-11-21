@@ -72,7 +72,8 @@
   "image": "https://www.bazos.sk/obrazky/empty.gif",
   "posted": "2026-11-21",
   "first_seen": "2026-11-21T12:12:50+00:00",
-  "active": true
+  "active": false,
+  "gone_since": "2026-11-21T12:16:06+00:00"
  },
  {
   "id": "bazos:197743392",
@@ -102,8 +103,9 @@
   "image": "https://www.bazos.sk/img/1t/984/196647984.jpg?t=1794683255",
   "posted": "2026-11-20",
   "first_seen": "2026-11-21T12:12:50+00:00",
-  "active": true,
-  "dup_of": "nehn:JumOLfUFu5s"
+  "active": false,
+  "dup_of": "nehn:JumOLfUFu5s",
+  "gone_since": "2026-11-21T12:16:06+00:00"
  },
  {
   "id": "bazos:197730245",
@@ -481,7 +483,7 @@
   "image": "https://img.unitedclassifieds.sk/foto/Zml0LWluLzgwMHgyMDAwL2ZpbHRlcnM6cXVhbGl0eSg4MCk6Zm9ybWF0KHdlYnApL2p1bA==/RIOu9Nivn_fss?st=lsVIh-Vm1z6UQUAmt8XTbY6UJUf-Pdek3e_mIjCvX4s&ts=1785739864&e=0",
   "posted": "2026-08-03",
   "first_seen": "2026-11-21T12:08:39+00:00",
-  "active": true,
+  "active": false,
   "also": [
    {
     "source": "TopReality",
@@ -491,7 +493,8 @@
     "source": "Bazoš",
     "url": "https://reality.bazos.sk/inzerat/196647984/top-lokalita-pre-studentov-prenajom-izby-zimna-ulica.php"
    }
-  ]
+  ],
+  "gone_since": "2026-11-21T12:16:06+00:00"
  },
  {
   "id": "nehn:JuaSDRDCDZf",
@@ -656,8 +659,9 @@
   "image": "https://www.topreality.sk/topfoto/t/939/9394587-1-5.jpg?1794986472",
   "posted": null,
   "first_seen": "2026-11-21T12:08:39+00:00",
-  "active": true,
-  "dup_of": "nehn:JumOLfUFu5s"
+  "active": false,
+  "dup_of": "nehn:JumOLfUFu5s",
+  "gone_since": "2026-11-21T12:16:06+00:00"
  },
  {
   "id": "topr:9469612",
