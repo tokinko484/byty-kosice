@@ -117,6 +117,25 @@ def load_listings() -> list[dict] | None:
     return None
 
 
+def save_ai_data(listings: list[dict], status: dict):
+    """Kompaktné dáta pre AI chat bota, šifrované kľúčom odvodeným z TELEGRAM_TOKEN (bot ho má tiež)."""
+    if not TG_TOKEN:
+        return
+    import base64
+    import hashlib
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    keep_keys = ("source", "title", "price", "rooms", "area", "location", "url", "first_seen", "active",
+                 "gone_since", "price_drop_from", "also", "desc")
+    items = [{k: (x.get(k)[:200] if k == "desc" and x.get(k) else x.get(k)) for k in keep_keys if x.get(k) not in (None, "", [])}
+             for x in listings if not x.get("dup_of")]
+    payload = json.dumps({"status": status, "listings": items}, ensure_ascii=False).encode()
+    key = hashlib.sha256(("k-watch-ai|" + TG_TOKEN).encode()).digest()
+    iv = os.urandom(12)
+    ct = AESGCM(key).encrypt(iv, payload, None)
+    (DATA_DIR / "ai.enc.json").write_text(json.dumps({"iv": base64.b64encode(iv).decode(),
+                                                     "ct": base64.b64encode(ct).decode()}), "utf-8")
+
+
 def save_data(listings: list[dict], status: dict, changed: bool):
     if SITE_PASSWORD:
         old_iter = None
@@ -541,8 +560,8 @@ def tg_handle_updates():
         "| chatov v TELEGRAM_CHAT_ID:", len(TG_CHATS))
     wh = tg("getWebhookInfo")
     if wh and wh.get("ok") and wh["result"].get("url"):
-        log("Telegram: bol nastavený webhook – vypínam ho")
-        tg("deleteWebhook")
+        log("Telegram: správy spracúva chat bot (webhook) – getUpdates preskakujem")
+        return
     j = tg("getUpdates", timeout=0)
     if not j or not j.get("ok"):
         return
@@ -739,6 +758,7 @@ def main():
     status["active"] = sum(1 for x in listings if x.get("active") and not x.get("dup_of"))
     changed = json.dumps(listings, ensure_ascii=False, sort_keys=True) != old_json
     save_data(listings, status, changed)
+    save_ai_data(listings, status)
 
     if first_run:
         log(f"Prvý beh – uložených {status['active']} ponúk, upozornenia neposielam")
