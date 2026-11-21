@@ -485,7 +485,7 @@ SOURCES = {
     "Nehnuteľnosti": scrape_nehnutelnosti,
     "TopReality": scrape_topreality,
     "Bezrealitky": scrape_bezrealitky,
-    "Bazar.sk": scrape_bazar,
+    # "Bazar.sk": scrape_bazar,  # vypnuté 2026-11-21: Bazar.sk blokuje GitHub Actions (RemoteDisconnected)
 }
 
 
