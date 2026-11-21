@@ -58,6 +58,10 @@ def log(*a):
     print(*a, flush=True)
 
 
+class NotFound(RuntimeError):
+    pass
+
+
 def get(url: str, **kw) -> requests.Response:
     last = None
     for attempt in range(3):
@@ -65,6 +69,8 @@ def get(url: str, **kw) -> requests.Response:
             r = S.get(url, timeout=30, **kw)
             if r.status_code == 200:
                 return r
+            if r.status_code == 404:
+                raise NotFound(f"{url} -> HTTP 404")
             last = f"HTTP {r.status_code}"
         except requests.RequestException as e:  # noqa: PERF203
             last = str(e)
@@ -128,7 +134,10 @@ def scrape_bazos() -> list[dict]:
     out = []
     for offset in range(0, 400, 40):  # Bazoš zobrazuje 40 inzerátov na stránku
         url = base + (f"{offset}/" if offset else "") + params
-        soup = BeautifulSoup(get(url).text, "html.parser")
+        try:
+            soup = BeautifulSoup(get(url).text, "html.parser")
+        except NotFound:
+            break  # za poslednou stránkou
         items = soup.select("div.inzeraty")
         if not items:
             break
@@ -229,8 +238,8 @@ def scrape_nehnutelnosti() -> list[dict]:
             url = f"https://www.nehnutelnosti.sk/vysledky/{cat}/kosice/prenajom" + (f"?page={p}" if p > 1 else "")
             try:
                 page = _nehnutelnosti_page(url)
-            except RuntimeError as e:
-                if p > 1 and "404" in str(e):
+            except NotFound:
+                if p > 1:
                     break  # koniec stránkovania
                 raise
             if not page:
@@ -250,7 +259,12 @@ def scrape_topreality() -> list[dict]:
         url = ("https://www.topreality.sk/vyhladavanie-nehnutelnosti.html?form=3&type%5B%5D=102"
                f"&type%5B%5D=103&type%5B%5D=108&obec=&q=Ko%C5%A1ice&cena_do={MAX_PRICE}&searchType=string"
                + (f"&page={page}" if page > 1 else ""))
-        soup = BeautifulSoup(get(url).text, "html.parser")
+        try:
+            soup = BeautifulSoup(get(url).text, "html.parser")
+        except NotFound:
+            if page > 1:
+                break
+            raise
         cards = soup.select("div.row.estate")
         added = 0
         for c in cards:
@@ -456,6 +470,7 @@ def main():
     first_run = not LISTINGS_FILE.exists()
     old = {x["id"]: x for x in (json.loads(LISTINGS_FILE.read_text("utf-8")) if not first_run else [])}
     state = json.loads(STATE_FILE.read_text("utf-8")) if STATE_FILE.exists() else {"fails": {}}
+    state.setdefault("initialized", sorted({x["source"] for x in old.values()}))
 
     try:
         tg_handle_updates()
@@ -493,14 +508,15 @@ def main():
         x.pop("text_for_filter", None)
         if lid in merged:
             e = merged[lid]
-            price_drop = e.get("price") and x.get("price") and x["price"] < e["price"]
+            old_price = e.get("price")
+            price_drop = old_price and x.get("price") and x["price"] < old_price
             for k in ("title", "desc", "price", "rooms", "area", "location", "url", "image", "posted"):
                 if x.get(k) is not None:
                     e[k] = x[k]
             if price_drop:
-                e["price_drop_from"] = old[lid]["price"]
+                e["price_drop_from"] = old_price
                 if not e.get("dup_of") and not first_run:
-                    new_items.append({**e, "title": f"📉 Zníženie ceny z {old[lid]['price']} €: " + e["title"]})
+                    new_items.append({**e, "title": f"📉 Zlacnené z {old_price} €: " + e["title"]})
             e["active"] = True
             e.pop("gone_since", None)
         else:
@@ -527,6 +543,8 @@ def main():
             del merged[lid]
 
     listings = sorted(merged.values(), key=lambda x: x["first_seen"], reverse=True)
+    prev_initialized = set(state["initialized"])
+    state["initialized"] = sorted(prev_initialized | ok_sources)
     new_json = json.dumps(listings, ensure_ascii=False, indent=1)
     if not LISTINGS_FILE.exists() or LISTINGS_FILE.read_text("utf-8") != new_json:
         LISTINGS_FILE.write_text(new_json, "utf-8")
@@ -539,6 +557,11 @@ def main():
         tg_broadcast(f"🏠 Sledovanie bytov spustené. Aktuálne {status['active']} ponúk do {MAX_PRICE} €."
                      + (f"\n{SITE_URL}" if SITE_URL else "") + "\nNové ponuky ti budem posielať sem.")
     else:
+        # zdroj, ktorý práve funguje prvýkrát, by inak poslal všetky svoje inzeráty naraz
+        fresh_sources = ok_sources - prev_initialized
+        if fresh_sources:
+            log("Prvý úspešný beh zdrojov (bez upozornení):", ", ".join(sorted(fresh_sources)))
+        new_items = [x for x in new_items if x["source"] not in fresh_sources]
         new_items.sort(key=lambda x: x.get("price") or 9999)
         log(f"Nové/zlacnené: {len(new_items)}")
         notify_new(new_items)
