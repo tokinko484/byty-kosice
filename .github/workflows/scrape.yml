@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: "*/15 * * * *"   # každých 15 minút (GitHub môže beh trochu oneskoriť)
   workflow_dispatch:
+  repository_dispatch:
+    types: [cron]          # externý časovač (cron-job.org), keď GitHub plán nespúšťa
 
 permissions:
   contents: write
