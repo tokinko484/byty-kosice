@@ -42,6 +42,7 @@
   .also{font-size:12px}.also a{color:var(--acc)}
   .empty{grid-column:1/-1;text-align:center;color:var(--mute);padding:40px 10px}
   #lock{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px}
+  #lock[hidden]{display:none}
   #lock form{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;width:100%;max-width:320px;text-align:center}
   #lock input{width:100%;font:inherit;font-size:22px;letter-spacing:6px;text-align:center;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);margin:12px 0}
   #lock button{width:100%;border:0;border-radius:10px;padding:11px;background:var(--acc);color:#fff;font:inherit;font-weight:600}
@@ -178,6 +179,7 @@ document.getElementById('lockform').addEventListener('submit', async e => {
   e.preventDefault();
   PW = document.getElementById('pw').value.trim();
   document.getElementById('pwerr').textContent = 'Overujem…';
+  document.getElementById('pw').blur();
   if (await load()){
     store.set('pw', PW);
     const ck = Object.keys(keyCache).find(k => keyCache[k].bits);
