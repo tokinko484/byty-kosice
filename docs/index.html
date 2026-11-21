@@ -69,7 +69,8 @@ const store = {
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
 let DATA = [], STATUS = null;
-const st = Object.assign({rooms:'all', max:680, src:'all', sort:'new', fav:false, hideSeen:false, gone:false}, store.get('filters', {}));
+const st = Object.assign({rooms:'all', max:700, src:'all', sort:'new', fav:false, hideSeen:false, gone:false}, store.get('filters', {}));
+if (!st.v700) { st.max = 700; st.v700 = true; }
 let favs = new Set(store.get('favs', [])), seen = new Set(store.get('seen', []));
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -92,7 +93,7 @@ function setF(k, v){ st[k] = v; store.set('filters', st); render(); }
 function renderFilters(){
   const r = document.getElementById('f-rooms'); r.innerHTML = '';
   [['all','1,5 aj 2 izby'],['1,5','1,5 izb.'],['2','2 izb.']].forEach(([v,l]) => r.append(chip(l, st.rooms===v, () => setF('rooms', v))));
-  [600,650,680].forEach(p => r.append(chip(`do ${p} €`, st.max===p, () => setF('max', p))));
+  [600,650,680,700].forEach(p => r.append(chip(`do ${p} €`, st.max===p, () => setF('max', p))));
   const m = document.getElementById('f-more'); m.innerHTML = '';
   m.append(chip(st.sort==='new' ? '↓ Najnovšie' : '↑ Najlacnejšie', false, () => setF('sort', st.sort==='new' ? 'price' : 'new')));
   const srcs = ['all', ...new Set(DATA.map(x => x.source))];
