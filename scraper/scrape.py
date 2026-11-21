@@ -1,0 +1,554 @@
+#!/usr/bin/env python3
+"""Byty Košice – zbiera inzeráty na prenájom 1,5–2 izbových bytov a posiela upozornenia.
+
+Zdroje:
+  * Bazoš (reality.bazos.sk)
+  * Nehnuteľnosti.sk (rovnaká databáza ako Reality.sk a Byty.sk)
+  * TopReality.sk
+
+Spustenie:
+  python scraper/scrape.py            # bežný beh (scrape + Telegram)
+  python scraper/scrape.py --digest   # denný súhrn na mail (ak je nastavený)
+"""
+from __future__ import annotations
+
+import argparse
+import html
+import json
+import os
+import re
+import smtplib
+import sys
+import time
+import unicodedata
+from datetime import datetime, timedelta, timezone
+from email.mime.text import MIMEText
+from pathlib import Path
+from urllib.parse import urljoin
+
+import requests
+from bs4 import BeautifulSoup
+
+# ---------------------------------------------------------------- nastavenia
+MAX_PRICE = int(os.getenv("MAX_PRICE", "680"))   # €/mesiac – horná hranica
+GOOD_PRICE = int(os.getenv("GOOD_PRICE", "650"))  # pod touto cenou = „dobrá cena“
+MIN_PRICE = 200                                    # nižšie ceny sú zvyčajne nezmysel/izby
+KEEP_GONE_DAYS = 14                                # ako dlho držať zmiznuté inzeráty
+FAIL_ALERT_AFTER = 8                               # po koľkých zlyhaniach zdroja poslať varovanie
+
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / "docs" / "data"
+LISTINGS_FILE = DATA_DIR / "listings.json"
+STATUS_FILE = DATA_DIR / "status.json"
+STATE_FILE = DATA_DIR / "state.json"   # počítadlá chýb zdrojov
+
+SITE_URL = os.getenv("SITE_URL", "")
+TG_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+TG_CHATS = [c.strip() for c in os.getenv("TELEGRAM_CHAT_ID", "").split(",") if c.strip()]
+
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/131.0 Safari/537.36")
+S = requests.Session()
+S.headers.update({"User-Agent": UA, "Accept-Language": "sk-SK,sk;q=0.9,cs;q=0.8,en;q=0.7"})
+
+NOW = datetime.now(timezone.utc)
+
+
+def log(*a):
+    print(*a, flush=True)
+
+
+def get(url: str, **kw) -> requests.Response:
+    last = None
+    for attempt in range(3):
+        try:
+            r = S.get(url, timeout=30, **kw)
+            if r.status_code == 200:
+                return r
+            last = f"HTTP {r.status_code}"
+        except requests.RequestException as e:  # noqa: PERF203
+            last = str(e)
+        time.sleep(2 + attempt * 3)
+    raise RuntimeError(f"{url} -> {last}")
+
+
+# ---------------------------------------------------------------- pomocné
+def strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+
+RE_15 = re.compile(r"(?<![\d,.])1\s*[,.]\s*5\s*[-–]?\s*(izb|izieb)|(?<![\d,.])1[,.]5-?i\b|jedenapol", re.I)
+RE_2 = re.compile(r"(?<![\d,.])2\s*[-–]?\s*(izb|izieb)|(?<![\d,.])2-?i\b|dvojizb|dvoj-izb|dvojgars", re.I)
+# (texty sa porovnávajú bez diakritiky)
+RE_SEEK = re.compile(r"\b(hladam|hladame|kupim|vymenim|vymena)\b")
+RE_ROOM_ONLY = re.compile(r"spolubyva|\bizbu\b|\blozk|ubytovn|podnajom izby|kancelar|garaz na prenajom")
+
+
+def detect_rooms(*texts: str) -> str | None:
+    for t in texts:
+        if not t:
+            continue
+        if RE_15.search(t):
+            return "1,5"
+        if RE_2.search(t):
+            return "2"
+    return None
+
+
+def parse_price(text: str | None) -> int | None:
+    if not text:
+        return None
+    t = text.replace("\xa0", " ")
+    m = re.search(r"(\d[\d ]{1,7})(?:[,.]\d+)?\s*(€|eur)", t, re.I) or re.search(r"(\d[\d ]{1,7})", t)
+    if not m:
+        return None
+    try:
+        return int(m.group(1).replace(" ", ""))
+    except ValueError:
+        return None
+
+
+def parse_area(text: str | None) -> float | None:
+    if not text:
+        return None
+    m = re.search(r"(\d{2,3}(?:[,.]\d{1,2})?)\s*(m2|m²|m\b)", text)
+    return float(m.group(1).replace(",", ".")) if m else None
+
+
+def norm_title(t: str) -> str:
+    t = strip_accents(t.lower())
+    return re.sub(r"[^a-z0-9]+", "", t)[:60]
+
+
+# ---------------------------------------------------------------- zdroje
+def scrape_bazos() -> list[dict]:
+    base = "https://reality.bazos.sk/prenajmu/byt/"
+    params = ("?hledat=&rubriky=reality&hlokalita=04001&humkreis=10"
+              f"&cenaod=&cenado={MAX_PRICE}&order=")
+    out = []
+    for offset in range(0, 400, 40):  # Bazoš zobrazuje 40 inzerátov na stránku
+        url = base + (f"{offset}/" if offset else "") + params
+        soup = BeautifulSoup(get(url).text, "html.parser")
+        items = soup.select("div.inzeraty")
+        if not items:
+            break
+        new_on_page = 0
+        for it in items:
+            a = it.select_one("h2.nadpis a")
+            if not a:
+                continue
+            href = urljoin("https://reality.bazos.sk/", a.get("href", ""))
+            m = re.search(r"/inzerat/(\d+)/", href)
+            if not m:
+                continue
+            lid = "bazos:" + m.group(1)
+            if any(x["id"] == lid for x in out):
+                continue
+            new_on_page += 1
+            title = a.get_text(" ", strip=True)
+            desc = (it.select_one(".popis") or it).get_text(" ", strip=True)
+            price = parse_price((it.select_one(".inzeratycena") or it).get_text(" ", strip=True))
+            loc = (it.select_one(".inzeratylok") or it).get_text(" ", strip=True)
+            img = it.select_one("img")
+            img = img.get("src") if img else None
+            date_el = it.select_one(".velikost10")
+            posted = None
+            if date_el:
+                dm = re.search(r"(\d{1,2})\.(\d{1,2})\.\s*(\d{4})", date_el.get_text())
+                if dm:
+                    posted = f"{dm.group(3)}-{int(dm.group(2)):02d}-{int(dm.group(1)):02d}"
+            out.append({
+                "id": lid, "source": "Bazoš", "title": title, "desc": desc[:300],
+                "price": price, "rooms": detect_rooms(title, desc), "area": parse_area(title + " " + desc),
+                "location": re.sub(r"\s+", " ", loc), "url": href, "image": img, "posted": posted,
+                "text_for_filter": title + " " + desc,
+            })
+        if new_on_page == 0:
+            break
+        time.sleep(1.5)
+    return out
+
+
+def _nehnutelnosti_page(url: str) -> list[dict]:
+    r = get(url)
+    soup = BeautifulSoup(r.text, "html.parser")
+    items = []
+    for sc in soup.select('script[type="application/ld+json"]'):
+        try:
+            data = json.loads(sc.string or "")
+        except json.JSONDecodeError:
+            continue
+        for node in data.get("@graph", [data]):
+            if node.get("@type") == "SearchResultsPage":
+                items = node.get("mainEntity", {}).get("itemListElement", [])
+    out = []
+    for el in items:
+        it = el.get("item", {})
+        url_d = it.get("url", "")
+        m = re.search(r"/detail/([^/]+)/", url_d)
+        if not m:
+            continue
+        nid = m.group(1)
+        # lokalita z HTML karty (best effort)
+        loc = ""
+        a = soup.find("a", href=re.compile(re.escape(nid)))
+        node = a
+        for _ in range(10):
+            if node is None:
+                break
+            txt = node.get_text("\n", strip=True)
+            lm = re.search(r"^[^\n]*Košice[^\n]*okres[^\n]*$", txt, re.M)
+            if lm:
+                loc = lm.group(0)
+                break
+            node = node.parent
+        imgs = it.get("image") or []
+        price = (it.get("priceSpecification") or {}).get("price")
+        try:
+            price = int(float(price)) if price is not None else None
+        except (TypeError, ValueError):
+            price = None
+        area = (it.get("floorSize") or {}).get("value")
+        title = it.get("name", "").strip(" |")
+        desc = it.get("description", "") or ""
+        out.append({
+            "id": "nehn:" + nid, "source": "Nehnuteľnosti", "title": title, "desc": desc[:300],
+            "price": price, "rooms": detect_rooms(it.get("category", ""), title, desc[:400]),
+            "area": float(area) if area else parse_area(title),
+            "location": loc, "url": url_d, "image": imgs[0] if imgs else None,
+            "posted": (it.get("validFrom") or "")[:10] or None,
+            "text_for_filter": title + " " + desc[:300],
+        })
+    return out
+
+
+def scrape_nehnutelnosti() -> list[dict]:
+    out: list[dict] = []
+    for cat, pages in (("2-izbove-byty", 8), ("1-izbove-byty", 4)):
+        for p in range(1, pages + 1):
+            url = f"https://www.nehnutelnosti.sk/vysledky/{cat}/kosice/prenajom" + (f"?page={p}" if p > 1 else "")
+            try:
+                page = _nehnutelnosti_page(url)
+            except RuntimeError as e:
+                if p > 1 and "404" in str(e):
+                    break  # koniec stránkovania
+                raise
+            if not page:
+                break
+            if cat == "1-izbove-byty":
+                page = [x for x in page if RE_15.search(x["title"] + " " + x["desc"])]
+                for x in page:
+                    x["rooms"] = "1,5"
+            out.extend(x for x in page if all(y["id"] != x["id"] for y in out))
+            time.sleep(1.5)
+    return out
+
+
+def scrape_topreality() -> list[dict]:
+    out = []
+    for page in range(1, 6):
+        url = ("https://www.topreality.sk/vyhladavanie-nehnutelnosti.html?form=3&type%5B%5D=102"
+               f"&type%5B%5D=103&type%5B%5D=108&obec=&q=Ko%C5%A1ice&cena_do={MAX_PRICE}&searchType=string"
+               + (f"&page={page}" if page > 1 else ""))
+        soup = BeautifulSoup(get(url).text, "html.parser")
+        cards = soup.select("div.row.estate")
+        added = 0
+        for c in cards:
+            a = c.select_one("h2 a") or c.select_one("a[href*='-r']")
+            if not a:
+                continue
+            href = urljoin("https://www.topreality.sk/", a.get("href", ""))
+            m = re.search(r"-r(\d+)\.html", href)
+            if not m:
+                continue
+            lid = "topr:" + m.group(1)
+            if any(x["id"] == lid for x in out):
+                continue
+            added += 1
+            title = a.get_text(" ", strip=True)
+            price_el = c.select_one(".price")
+            price = parse_price(price_el.get_text(" ", strip=True) if price_el else "")
+            city = c.select_one(".location-city")
+            dist = c.select_one(".location-district")
+            loc = " ".join(x.get_text(" ", strip=True) for x in (city, dist) if x)
+            img = c.select_one("img")
+            img_url = None
+            if img:
+                img_url = img.get("data-src") or img.get("src")
+                if img_url and img_url.startswith("data:"):
+                    img_url = img.get("data-src")
+            text = c.get_text(" ", strip=True)
+            out.append({
+                "id": lid, "source": "TopReality", "title": title, "desc": "",
+                "price": price, "rooms": detect_rooms(title, text), "area": parse_area(text),
+                "location": loc, "url": href, "image": urljoin("https://www.topreality.sk/", img_url) if img_url else None,
+                "posted": None, "text_for_filter": title,
+            })
+        if added == 0:
+            break
+        time.sleep(1.5)
+    return out
+
+
+SOURCES = {
+    "Bazoš": scrape_bazos,
+    "Nehnuteľnosti": scrape_nehnutelnosti,
+    "TopReality": scrape_topreality,
+}
+
+
+# ---------------------------------------------------------------- filter
+def keep(x: dict) -> bool:
+    if x.get("price") is None or not (MIN_PRICE <= x["price"] <= MAX_PRICE):
+        return False
+    if x.get("rooms") not in ("1,5", "2"):
+        return False
+    t = strip_accents(x["title"].lower())
+    if RE_SEEK.search(t):
+        return False
+    if RE_ROOM_ONLY.search(t) and not (RE_2.search(t) or RE_15.search(t)):
+        return False
+    if "kosice" not in strip_accents((x.get("location", "") + " " + x["text_for_filter"]).lower()) \
+            and x["source"] != "Bazoš":
+        return False
+    return True
+
+
+def title_words(t: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", strip_accents(t.lower())) if len(w) >= 5}
+
+
+def find_duplicate(x: dict, existing: dict) -> str | None:
+    """Ten istý byt na inom portáli: rovnaká cena + (rovnaký názov alebo podobný názov a rozloha)."""
+    nt, wx = norm_title(x["title"]), title_words(x["title"])
+    for eid, e in existing.items():
+        if e["source"] == x["source"] or e.get("dup_of") or e.get("price") != x.get("price"):
+            continue
+        if nt and nt == norm_title(e["title"]):
+            return eid
+        we = title_words(e["title"])
+        sim = len(wx & we) / max(1, len(wx | we))
+        same_area = x.get("area") and e.get("area") and abs(x["area"] - e["area"]) < 0.6
+        if sim >= 0.6 or (same_area and sim >= 0.3):
+            return eid
+    return None
+
+
+# ---------------------------------------------------------------- Telegram
+def tg(method: str, **params):
+    if not TG_TOKEN:
+        return None
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/{method}", data=params, timeout=30)
+        j = r.json()
+        if not j.get("ok"):
+            log("Telegram chyba:", method, j.get("description"))
+        return j
+    except Exception as e:  # noqa: BLE001
+        log("Telegram výnimka:", method, type(e).__name__)
+        return None
+
+
+def tg_handle_updates():
+    """Odpovie každému, kto botovi napíše, jeho chat ID (potrebné do TELEGRAM_CHAT_ID)."""
+    j = tg("getUpdates", timeout=0)
+    if not j or not j.get("ok"):
+        return
+    updates = j.get("result", [])
+    if not updates:
+        return
+    seen = set()
+    for u in updates:
+        msg = u.get("message") or u.get("channel_post") or {}
+        chat = msg.get("chat") or {}
+        cid = chat.get("id")
+        if cid is None or cid in seen:
+            continue
+        seen.add(cid)
+        if str(cid) in TG_CHATS:
+            text = "✅ Upozornenia na byty sú pre tento chat zapnuté."
+        else:
+            text = (f"👋 Ahoj! Tvoje chat ID je:\n<code>{cid}</code>\n\n"
+                    "Vlož ho do GitHubu ako secret <b>TELEGRAM_CHAT_ID</b> "
+                    "(viac ID oddeľ čiarkou) a začnú ti chodiť nové byty.")
+        tg("sendMessage", chat_id=cid, text=text, parse_mode="HTML")
+    tg("getUpdates", offset=updates[-1]["update_id"] + 1, timeout=0)
+
+
+def fmt_listing(x: dict) -> str:
+    price = f"{x['price']} €" if x.get("price") else "cena ?"
+    good = " 🔥" if x.get("price") and x["price"] <= GOOD_PRICE else ""
+    bits = [f"<b>{price}{good}</b> · {x['rooms']} izb."]
+    if x.get("area"):
+        bits.append(f"{x['area']:g} m²")
+    lines = [" · ".join(bits), html.escape(x["title"][:150])]
+    if x.get("location"):
+        lines.append("📍 " + html.escape(x["location"][:80]))
+    lines.append(f"🔎 {x['source']}")
+    lines.append(f'<a href="{html.escape(x["url"])}">Otvoriť inzerát</a>')
+    return "\n".join(lines)
+
+
+def notify_new(items: list[dict]):
+    if not TG_TOKEN or not TG_CHATS:
+        log(f"Telegram nie je nastavený – {len(items)} nových bez upozornenia")
+        return
+    for x in items[:25]:
+        caption = fmt_listing(x)
+        for cid in TG_CHATS:
+            ok = False
+            if x.get("image"):
+                j = tg("sendPhoto", chat_id=cid, photo=x["image"], caption=caption, parse_mode="HTML")
+                ok = bool(j and j.get("ok"))
+            if not ok:
+                tg("sendMessage", chat_id=cid, text=caption, parse_mode="HTML", disable_web_page_preview="true")
+        time.sleep(1)
+    if len(items) > 25:
+        more = f"…a ďalších {len(items) - 25} nových ponúk." + (f"\n{SITE_URL}" if SITE_URL else "")
+        for cid in TG_CHATS:
+            tg("sendMessage", chat_id=cid, text=more)
+
+
+def tg_broadcast(text: str):
+    for cid in TG_CHATS:
+        tg("sendMessage", chat_id=cid, text=text, parse_mode="HTML", disable_web_page_preview="true")
+
+
+# ---------------------------------------------------------------- mail
+def send_mail(subject: str, body_html: str) -> bool:
+    user, pw = os.getenv("GMAIL_USER", ""), os.getenv("GMAIL_APP_PASSWORD", "")
+    to = os.getenv("MAIL_TO", user)
+    if not (user and pw and to):
+        log("Mail nie je nastavený – preskakujem")
+        return False
+    msg = MIMEText(body_html, "html", "utf-8")
+    msg["Subject"], msg["From"], msg["To"] = subject, user, to
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s:
+        s.login(user, pw)
+        s.sendmail(user, [t.strip() for t in to.split(",")], msg.as_string())
+    return True
+
+
+def digest():
+    listings = json.loads(LISTINGS_FILE.read_text("utf-8")) if LISTINGS_FILE.exists() else []
+    since = NOW - timedelta(hours=24)
+    new = [x for x in listings if not x.get("dup_of") and x.get("active", True)
+           and datetime.fromisoformat(x["first_seen"]) >= since]
+    new.sort(key=lambda x: x.get("price") or 9999)
+    if not new:
+        log("Žiadne nové za 24 h – mail neposielam")
+        return
+    rows = "".join(
+        f'<tr><td style="padding:6px 10px"><b>{x["price"]} €</b></td><td>{x["rooms"]} izb.</td>'
+        f'<td>{x.get("area") or ""}{" m²" if x.get("area") else ""}</td>'
+        f'<td><a href="{html.escape(x["url"])}">{html.escape(x["title"][:90])}</a><br>'
+        f'<small>{html.escape(x.get("location") or "")} · {x["source"]}</small></td></tr>'
+        for x in new)
+    body = (f"<h2>Nové byty za posledných 24 h ({len(new)})</h2>"
+            f"<table style='border-collapse:collapse;font-family:sans-serif'>{rows}</table>"
+            + (f'<p><a href="{SITE_URL}">Otvoriť prehľad</a></p>' if SITE_URL else ""))
+    send_mail(f"🏠 {len(new)} nových bytov v Košiciach", body)
+
+
+# ---------------------------------------------------------------- hlavný beh
+def main():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    first_run = not LISTINGS_FILE.exists()
+    old = {x["id"]: x for x in (json.loads(LISTINGS_FILE.read_text("utf-8")) if not first_run else [])}
+    state = json.loads(STATE_FILE.read_text("utf-8")) if STATE_FILE.exists() else {"fails": {}}
+
+    try:
+        tg_handle_updates()
+    except Exception as e:  # noqa: BLE001
+        log("getUpdates zlyhal:", e)
+
+    status = {"checked_at": NOW.isoformat(timespec="seconds"), "sources": {}}
+    scraped: dict[str, dict] = {}
+    ok_sources = set()
+    for name, fn in SOURCES.items():
+        t0 = time.time()
+        try:
+            raw = fn()
+            kept = [x for x in raw if keep(x)]
+            for x in kept:
+                scraped[x["id"]] = x
+            ok_sources.add(name)
+            prev_fails = state["fails"].get(name, 0)
+            state["fails"][name] = 0
+            status["sources"][name] = {"ok": True, "raw": len(raw), "kept": len(kept)}
+            log(f"{name}: {len(raw)} nájdených, {len(kept)} vyhovuje ({time.time() - t0:.1f}s)")
+            if prev_fails >= FAIL_ALERT_AFTER:
+                tg_broadcast(f"✅ Zdroj {name} opäť funguje.")
+        except Exception as e:  # noqa: BLE001
+            n = state["fails"].get(name, 0) + 1
+            state["fails"][name] = n
+            status["sources"][name] = {"ok": False, "error": str(e)[:200]}
+            log(f"{name}: CHYBA {e}")
+            if n == FAIL_ALERT_AFTER:
+                tg_broadcast(f"⚠️ Zdroj {name} už {n}× za sebou nefunguje ({str(e)[:120]}).")
+
+    merged = dict(old)
+    new_items = []
+    for lid, x in scraped.items():
+        x.pop("text_for_filter", None)
+        if lid in merged:
+            e = merged[lid]
+            price_drop = e.get("price") and x.get("price") and x["price"] < e["price"]
+            for k in ("title", "desc", "price", "rooms", "area", "location", "url", "image", "posted"):
+                if x.get(k) is not None:
+                    e[k] = x[k]
+            if price_drop:
+                e["price_drop_from"] = old[lid]["price"]
+                if not e.get("dup_of") and not first_run:
+                    new_items.append({**e, "title": f"📉 Zníženie ceny z {old[lid]['price']} €: " + e["title"]})
+            e["active"] = True
+            e.pop("gone_since", None)
+        else:
+            x["first_seen"] = NOW.isoformat(timespec="seconds")
+            x["active"] = True
+            dup = find_duplicate(x, {k: v for k, v in merged.items() if v.get("active", True)})
+            if dup:
+                x["dup_of"] = dup
+                alts = merged[dup].setdefault("also", [])
+                if all(a["url"] != x["url"] for a in alts):
+                    alts.append({"source": x["source"], "url": x["url"]})
+            merged[lid] = x
+            if not dup:
+                new_items.append(x)
+
+    # zmiznuté inzeráty (len pri zdrojoch, ktoré dnes fungovali)
+    for lid, e in list(merged.items()):
+        if lid in scraped or e["source"] not in ok_sources:
+            continue
+        if e.get("active", True):
+            e["active"] = False
+            e["gone_since"] = NOW.isoformat(timespec="seconds")
+        elif e.get("gone_since") and datetime.fromisoformat(e["gone_since"]) < NOW - timedelta(days=KEEP_GONE_DAYS):
+            del merged[lid]
+
+    listings = sorted(merged.values(), key=lambda x: x["first_seen"], reverse=True)
+    new_json = json.dumps(listings, ensure_ascii=False, indent=1)
+    if not LISTINGS_FILE.exists() or LISTINGS_FILE.read_text("utf-8") != new_json:
+        LISTINGS_FILE.write_text(new_json, "utf-8")
+    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1), "utf-8")
+    status["active"] = sum(1 for x in listings if x.get("active") and not x.get("dup_of"))
+    STATUS_FILE.write_text(json.dumps(status, ensure_ascii=False, indent=1), "utf-8")
+
+    if first_run:
+        log(f"Prvý beh – uložených {status['active']} ponúk, upozornenia neposielam")
+        tg_broadcast(f"🏠 Sledovanie bytov spustené. Aktuálne {status['active']} ponúk do {MAX_PRICE} €."
+                     + (f"\n{SITE_URL}" if SITE_URL else "") + "\nNové ponuky ti budem posielať sem.")
+    else:
+        new_items.sort(key=lambda x: x.get("price") or 9999)
+        log(f"Nové/zlacnené: {len(new_items)}")
+        notify_new(new_items)
+
+    if not ok_sources:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--digest", action="store_true")
+    args = ap.parse_args()
+    digest() if args.digest else main()
