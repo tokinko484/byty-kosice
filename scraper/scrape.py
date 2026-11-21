@@ -87,7 +87,10 @@ RE_15 = re.compile(r"(?<![\d,.])1\s*[,.]\s*5\s*[-–]?\s*(izb|izieb)|(?<![\d,.])
 RE_2 = re.compile(r"(?<![\d,.])2\s*[-–]?\s*(izb|izieb)|(?<![\d,.])2-?i\b|dvojizb|dvoj-izb|dvojgars", re.I)
 # (texty sa porovnávajú bez diakritiky)
 RE_SEEK = re.compile(r"\b(hladam|hladame|kupim|vymenim|vymena|dopyt)\b")
-RE_ROOM_ONLY = re.compile(r"spolubyva|\bizbu\b|\blozk|ubytovn|podnajom izby|prenajom izby|kancelar|garaz na prenajom")
+RE_ROOM_ONLY = re.compile(
+    r"spolubyva|spolubyvajuc|\bizbu\b|\blozk|ubytovn|podnajom izby|prenajom izby|izba v \d|izby v \d|"
+    r"miesto v izbe|miesto v byte|volne miesto|miesta v izbe|za osobu|na osobu|/osoba|za lozko|"
+    r"zdielan|internat|kancelar|garaz na prenajom")
 
 
 def detect_rooms(*texts: str) -> str | None:
@@ -321,6 +324,10 @@ def keep(x: dict) -> bool:
     if RE_SEEK.search(t):
         return False
     if RE_ROOM_ONLY.search(t) and not (RE_2.search(t) or RE_15.search(t)):
+        return False
+    # miesto v izbe / spolubývanie aj keď je v názve „2-izbový byt“
+    full = strip_accents((x["title"] + " " + (x.get("desc") or "")).lower())
+    if re.search(r"miesto v izbe|miesto v byte|volne miesto|miesta v izbe|spolubyva|za osobu|na osobu|za lozko|\blozk", full):
         return False
     if "kosice" not in strip_accents((x.get("location", "") + " " + x["text_for_filter"]).lower()) \
             and x["source"] != "Bazoš":
