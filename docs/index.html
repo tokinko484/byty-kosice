@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0f172a">
+<title>Byty Košice – prenájom</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--ink:#0f172a;--mute:#64748b;--line:#e2e8f0;--acc:#2563eb;--good:#16a34a;--new:#f59e0b;--bad:#dc2626;--chip:#eef2ff}
+  @media (prefers-color-scheme:dark){:root{--bg:#0b1120;--card:#111827;--ink:#e5e7eb;--mute:#94a3b8;--line:#1f2937;--acc:#60a5fa;--chip:#1e293b}}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+  header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 14px calc(8px) ;padding-top:max(10px,env(safe-area-inset-top))}
+  h1{font-size:18px;margin:0 0 2px;display:flex;gap:8px;align-items:baseline}
+  h1 small{font-weight:500;color:var(--mute);font-size:13px}
+  .status{font-size:12px;color:var(--mute)}
+  .status b.ok{color:var(--good)} .status b.err{color:var(--bad)}
+  .bar{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;scrollbar-width:none}
+  .bar::-webkit-scrollbar{display:none}
+  .chip{flex:none;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
+  .chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  select.chip{appearance:none;padding-right:12px}
+  main{max-width:980px;margin:0 auto;padding:12px;display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(290px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;position:relative}
+  .card.seen{opacity:.55}
+  .card.gone{opacity:.45;filter:grayscale(1)}
+  .img{aspect-ratio:16/10;background:var(--chip) center/cover no-repeat;display:block;position:relative}
+  .badges{position:absolute;left:8px;top:8px;display:flex;gap:4px;flex-wrap:wrap}
+  .b{font-size:11px;font-weight:700;padding:3px 7px;border-radius:6px;background:#0009;color:#fff}
+  .b.new{background:var(--new);color:#111}.b.good{background:var(--good)}.b.drop{background:var(--bad)}
+  .body{padding:10px 12px 12px;display:flex;flex-direction:column;gap:4px;flex:1}
+  .price{font-size:20px;font-weight:800}
+  .price span{font-size:13px;font-weight:500;color:var(--mute);margin-left:6px}
+  .title{font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .meta{font-size:13px;color:var(--mute)}
+  .row{display:flex;gap:8px;margin-top:auto;padding-top:8px;align-items:center}
+  .row a.open{flex:1;text-align:center;background:var(--acc);color:#fff;text-decoration:none;border-radius:10px;padding:9px;font-weight:600}
+  .icon{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;width:40px;height:38px;font-size:17px;cursor:pointer}
+  .icon.on{background:#fde68a;border-color:#f59e0b}
+  .also{font-size:12px}.also a{color:var(--acc)}
+  .empty{grid-column:1/-1;text-align:center;color:var(--mute);padding:40px 10px}
+  footer{text-align:center;color:var(--mute);font-size:12px;padding:10px 12px 30px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏠 Byty Košice <small id="count"></small></h1>
+  <div class="status" id="status">Načítavam…</div>
+  <div class="bar" id="f-rooms"></div>
+  <div class="bar" id="f-more"></div>
+</header>
+<main id="list"></main>
+<footer>Ponuky z Bazoša, Nehnuteľností (aj Reality.sk a Byty.sk) a TopReality. Kontrola každých ~15 min.<br>⭐ a 👁 sa ukladajú len v tomto prehliadači.</footer>
+
+<script>
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+let DATA = [], STATUS = null;
+const st = Object.assign({rooms:'all', max:680, src:'all', sort:'new', fav:false, hideSeen:false, gone:false}, store.get('filters', {}));
+let favs = new Set(store.get('favs', [])), seen = new Set(store.get('seen', []));
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ago = iso => { const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (m < 60) return `pred ${m} min`; const h = Math.round(m/60); if (h < 24) return `pred ${h} h`;
+  const d = Math.round(h/24); return d === 1 ? 'včera' : `pred ${d} dňami`; };
+
+function chip(label, on, fn){ const b = document.createElement('button'); b.className = 'chip' + (on ? ' on' : ''); b.textContent = label; b.onclick = fn; return b; }
+function setF(k, v){ st[k] = v; store.set('filters', st); render(); }
+
+function renderFilters(){
+  const r = document.getElementById('f-rooms'); r.innerHTML = '';
+  [['all','1,5 aj 2 izby'],['1,5','1,5 izb.'],['2','2 izb.']].forEach(([v,l]) => r.append(chip(l, st.rooms===v, () => setF('rooms', v))));
+  [600,650,680].forEach(p => r.append(chip(`do ${p} €`, st.max===p, () => setF('max', p))));
+  const m = document.getElementById('f-more'); m.innerHTML = '';
+  m.append(chip(st.sort==='new' ? '↓ Najnovšie' : '↑ Najlacnejšie', false, () => setF('sort', st.sort==='new' ? 'price' : 'new')));
+  const srcs = ['all', ...new Set(DATA.map(x => x.source))];
+  const sel = document.createElement('select'); sel.className = 'chip' + (st.src!=='all' ? ' on' : '');
+  srcs.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s==='all' ? 'Všetky portály' : s; o.selected = st.src===s; sel.append(o); });
+  sel.onchange = () => setF('src', sel.value); m.append(sel);
+  m.append(chip(`⭐ Obľúbené (${favs.size})`, st.fav, () => setF('fav', !st.fav)));
+  m.append(chip('Skryť videné', st.hideSeen, () => setF('hideSeen', !st.hideSeen)));
+  m.append(chip('Aj zmiznuté', st.gone, () => setF('gone', !st.gone)));
+}
+
+function render(){
+  renderFilters();
+  let items = DATA.filter(x => !x.dup_of)
+    .filter(x => st.gone || x.active !== false)
+    .filter(x => st.rooms==='all' || x.rooms===st.rooms)
+    .filter(x => (x.price ?? 0) <= st.max)
+    .filter(x => st.src==='all' || x.source===st.src || (x.also||[]).some(a => a.source===st.src))
+    .filter(x => !st.fav || favs.has(x.id))
+    .filter(x => !st.hideSeen || !seen.has(x.id));
+  items.sort(st.sort==='price' ? (a,b) => a.price - b.price : (a,b) => b.first_seen.localeCompare(a.first_seen));
+  document.getElementById('count').textContent = `${items.length} ponúk`;
+  const el = document.getElementById('list');
+  if (!items.length){ el.innerHTML = '<div class="empty">Žiadne ponuky pre tento filter.</div>'; return; }
+  el.innerHTML = items.map(x => {
+    const isNew = Date.now() - new Date(x.first_seen) < 24*3600e3;
+    const badges = [x.active===false ? '<span class="b">zmizol</span>' : '',
+      isNew ? '<span class="b new">NOVÉ</span>' : '',
+      x.price <= 650 ? '<span class="b good">do 650 €</span>' : '',
+      x.price_drop_from ? `<span class="b drop">zlacnel z ${x.price_drop_from} €</span>` : '',
+      `<span class="b">${esc(x.source)}</span>`].join('');
+    const meta = [`${esc(x.rooms)} izb.`, x.area ? `${x.area} m²` : '', esc(x.location)].filter(Boolean).join(' · ');
+    const also = (x.also||[]).length ? `<div class="also">Aj na: ${x.also.map(a => `<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.source)}</a>`).join(', ')}</div>` : '';
+    return `<article class="card${seen.has(x.id) ? ' seen' : ''}${x.active===false ? ' gone' : ''}">
+      <a class="img" href="${esc(x.url)}" target="_blank" rel="noopener" data-id="${esc(x.id)}" style="${x.image ? `background-image:url('${esc(x.image)}')` : ''}"><div class="badges">${badges}</div></a>
+      <div class="body">
+        <div class="price">${x.price} €<span>/ mes.</span></div>
+        <div class="title">${esc(x.title)}</div>
+        <div class="meta">${meta}</div>
+        <div class="meta">Pridané ${ago(x.first_seen)}</div>
+        ${also}
+        <div class="row">
+          <a class="open" href="${esc(x.url)}" target="_blank" rel="noopener" data-id="${esc(x.id)}">Otvoriť inzerát</a>
+          <button class="icon${favs.has(x.id) ? ' on' : ''}" data-fav="${esc(x.id)}" title="Obľúbené">⭐</button>
+          <button class="icon" data-seen="${esc(x.id)}" title="Videné / nevidené">${seen.has(x.id) ? '↺' : '👁'}</button>
+        </div>
+      </div></article>`;
+  }).join('');
+}
+
+document.addEventListener('click', e => {
+  const f = e.target.closest('[data-fav]'), s = e.target.closest('[data-seen]'), o = e.target.closest('a[data-id]');
+  if (f){ const id = f.dataset.fav; favs.has(id) ? favs.delete(id) : favs.add(id); store.set('favs', [...favs]); render(); }
+  if (s){ const id = s.dataset.seen; seen.has(id) ? seen.delete(id) : seen.add(id); store.set('seen', [...seen]); render(); }
+  if (o){ seen.add(o.dataset.id); store.set('seen', [...seen]); setTimeout(render, 300); }
+});
+
+async function load(){
+  try{
+    const [l, s] = await Promise.all([
+      fetch('data/listings.json?t=' + Date.now()).then(r => r.ok ? r.json() : []),
+      fetch('data/status.json?t=' + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null)
+    ]);
+    DATA = l; STATUS = s;
+    const stEl = document.getElementById('status');
+    if (s){
+      const src = Object.entries(s.sources).map(([n, v]) => `${n} <b class="${v.ok ? 'ok' : 'err'}">${v.ok ? '✓' : '✗'}</b>`).join(' · ');
+      stEl.innerHTML = `Posledná kontrola ${ago(s.checked_at)} · ${src}`;
+    } else stEl.textContent = 'Zatiaľ bez kontroly';
+    render();
+  }catch(e){ document.getElementById('status').textContent = 'Nepodarilo sa načítať dáta.'; }
+}
+load();
+setInterval(load, 5 * 60e3);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+</script>
+</body>
+</html>
