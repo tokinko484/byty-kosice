@@ -1,7 +1,12 @@
 {
  "fails": {
-  "Bazoš": 1,
+  "Bazoš": 0,
   "Nehnuteľnosti": 0,
   "TopReality": 0
- }
+ },
+ "initialized": [
+  "Bazoš",
+  "Nehnuteľnosti",
+  "TopReality"
+ ]
 }
