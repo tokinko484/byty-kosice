@@ -782,6 +782,15 @@ def main():
         log(f"Nové/zlacnené: {len(new_items)}")
         notify_new(new_items)
 
+    # /sync z Telegramu – potvrdenie žiadateľovi
+    sync_chat = os.getenv("SYNC_CHAT", "").strip()
+    if sync_chat and sync_chat in TG_CHATS:
+        n_new = 0 if first_run else len(new_items)
+        bad = [n for n, v in status["sources"].items() if not v.get("ok")]
+        tg("sendMessage", chat_id=sync_chat, text=(
+            f"✅ Kontrola hotová – {'žiadne nové ponuky' if not n_new else f'{n_new} nových/zlacnených (poslal som ich vyššie)'}."
+            f"\nAktívnych ponúk: {status['active']}" + (f"\n⚠️ Nefungovalo: {', '.join(bad)}" if bad else "")))
+
     # ručné spustenie = testovacia správa s najlacnejšou aktuálnou ponukou
     if os.getenv("TEST_NOTIFY", "").lower() == "true" and TG_CHATS:
         best = sorted((x for x in listings if x.get("active") and not x.get("dup_of")),
