@@ -238,7 +238,7 @@ def scrape_nehnutelnosti() -> list[dict]:
     out: list[dict] = []
     for cat, pages in (("2-izbove-byty", 8), ("1-izbove-byty", 4)):
         for p in range(1, pages + 1):
-            url = f"https://www.nehnutelnosti.sk/vysledky/{cat}/kosice/prenajom" + (f"?page={p}" if p > 1 else "")
+            url = f"https://www.nehnutelnosti.sk/vysledky/{cat}/kosice/prenajom?order=NEWEST" + (f"&page={p}" if p > 1 else "")
             try:
                 page = _nehnutelnosti_page(url)
             except NotFound:
@@ -622,6 +622,13 @@ def main():
         else:
             x["first_seen"] = NOW.isoformat(timespec="seconds")
             x["active"] = True
+            # ten istý inzerát zmazaný a pridaný nanovo (nové ID na tom istom portáli) = nie je nový
+            repost = next((eid for eid, e in merged.items()
+                           if eid not in scraped and e["source"] == x["source"] and e.get("price") == x.get("price")
+                           and norm_title(e["title"]) == norm_title(x["title"])), None)
+            if repost:
+                x["repost_of"] = repost
+                x["first_seen"] = merged[repost]["first_seen"]
             dup = find_duplicate(x, {k: v for k, v in merged.items() if v.get("active", True)})
             if dup:
                 x["dup_of"] = dup
@@ -629,8 +636,10 @@ def main():
                 if all(a["url"] != x["url"] for a in alts):
                     alts.append({"source": x["source"], "url": x["url"]})
             merged[lid] = x
-            if not dup:
+            if not dup and not repost:
                 new_items.append(x)
+            elif repost:
+                log("Znovu pridaný inzerát (neposielam):", x["title"][:60])
 
     # zmiznuté inzeráty (len pri zdrojoch, ktoré dnes fungovali)
     for lid, e in list(merged.items()):
