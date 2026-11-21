@@ -449,10 +449,21 @@ def tg(method: str, **params):
 
 def tg_handle_updates():
     """Odpovie každému, kto botovi napíše, jeho chat ID (potrebné do TELEGRAM_CHAT_ID)."""
+    if not TG_TOKEN:
+        log("Telegram: TELEGRAM_TOKEN je prázdny")
+        return
+    me = tg("getMe")
+    log("Telegram bot:", (me or {}).get("result", {}).get("username") if me and me.get("ok") else "NEPLATNÝ TOKEN",
+        "| chatov v TELEGRAM_CHAT_ID:", len(TG_CHATS))
+    wh = tg("getWebhookInfo")
+    if wh and wh.get("ok") and wh["result"].get("url"):
+        log("Telegram: bol nastavený webhook – vypínam ho")
+        tg("deleteWebhook")
     j = tg("getUpdates", timeout=0)
     if not j or not j.get("ok"):
         return
     updates = j.get("result", [])
+    log("Telegram: nových správ pre bota:", len(updates))
     if not updates:
         return
     seen = set()
