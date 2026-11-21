@@ -54,4 +54,13 @@ jobs:
           path: docs
       - id: deploy
         if: always()
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+      - name: Opakovať nasadenie webu
+        if: always() && steps.deploy.outcome == 'failure'
+        continue-on-error: true
+        run: sleep 20
+      - id: deploy2
+        if: always() && steps.deploy.outcome == 'failure'
+        continue-on-error: true
         uses: actions/deploy-pages@v4
