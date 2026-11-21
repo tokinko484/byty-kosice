@@ -661,6 +661,14 @@ def main():
         log(f"Nové/zlacnené: {len(new_items)}")
         notify_new(new_items)
 
+    # ručné spustenie = testovacia správa s najlacnejšou aktuálnou ponukou
+    if os.getenv("TEST_NOTIFY", "").lower() == "true" and TG_CHATS:
+        best = sorted((x for x in listings if x.get("active") and not x.get("dup_of")),
+                      key=lambda x: x.get("price") or 9999)[:1]
+        tg_broadcast(f"🧪 Test – upozornenia fungujú. Sledujem {status['active']} ponúk."
+                     + (f"\n{SITE_URL}" if SITE_URL else "") + "\nNajlacnejšia aktuálna ponuka:")
+        notify_new(best)
+
     if not ok_sources:
         sys.exit(1)
 
