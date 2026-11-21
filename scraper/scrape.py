@@ -86,8 +86,8 @@ def strip_accents(s: str) -> str:
 RE_15 = re.compile(r"(?<![\d,.])1\s*[,.]\s*5\s*[-–]?\s*(izb|izieb)|(?<![\d,.])1[,.]5-?i\b|jedenapol", re.I)
 RE_2 = re.compile(r"(?<![\d,.])2\s*[-–]?\s*(izb|izieb)|(?<![\d,.])2-?i\b|dvojizb|dvoj-izb|dvojgars", re.I)
 # (texty sa porovnávajú bez diakritiky)
-RE_SEEK = re.compile(r"\b(hladam|hladame|kupim|vymenim|vymena)\b")
-RE_ROOM_ONLY = re.compile(r"spolubyva|\bizbu\b|\blozk|ubytovn|podnajom izby|kancelar|garaz na prenajom")
+RE_SEEK = re.compile(r"\b(hladam|hladame|kupim|vymenim|vymena|dopyt)\b")
+RE_ROOM_ONLY = re.compile(r"spolubyva|\bizbu\b|\blozk|ubytovn|podnajom izby|prenajom izby|kancelar|garaz na prenajom")
 
 
 def detect_rooms(*texts: str) -> str | None:
