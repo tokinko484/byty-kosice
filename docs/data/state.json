@@ -2,10 +2,14 @@
  "fails": {
   "Bazoš": 0,
   "Nehnuteľnosti": 0,
-  "TopReality": 0
+  "TopReality": 0,
+  "Bezrealitky": 0,
+  "Bazar.sk": 0
  },
  "initialized": [
+  "Bazar.sk",
   "Bazoš",
+  "Bezrealitky",
   "Nehnuteľnosti",
   "TopReality"
  ]
