@@ -404,7 +404,12 @@ def keep(x: dict) -> bool:
         return False
     # miesto v izbe / spolubývanie aj keď je v názve „2-izbový byt“
     full = strip_accents((x["title"] + " " + (x.get("desc") or "")).lower())
-    if re.search(r"miesto v izbe|miesto v byte|volne miesto|miesta v izbe|spolubyva|za osobu|na osobu|za lozko|\blozk", full):
+    if re.search(r"miesto v izbe|miesto v byte|volne miesto|miesta v izbe|spolubyva|za osobu|na osobu|za lozko|\blozk|"
+                 r"(prenajom|prenajmem|podnajom|ponukam|volna) (jednej |samostatnej |nepriechodnej |zariadenej |vacsej |mensej )*izb[yu]\b|"
+                 r"\bizb[ua] v (\d|byte|rodinnom|dome|zdielan)|nepriechodnej izby|samostatnej izby", full):
+        return False
+    # samostatná izba: v názve je „izba/izby/izbu“ bez počtu izieb bytu
+    if re.search(r"\b(izba|izbu|izby|izieb)\b", t) and not (RE_2.search(t) or RE_15.search(t)):
         return False
     if "kosice" not in strip_accents((x.get("location", "") + " " + x["text_for_filter"]).lower()) \
             and x["source"] != "Bazoš":
