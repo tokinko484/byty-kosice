@@ -1,4 +1,4 @@
-name: Kontrola bytov
+name: run
 
 on:
   schedule:
@@ -50,7 +50,7 @@ jobs:
           git add docs/data/state.json
           if [ -f docs/data/listings.enc.json ]; then git add docs/data/listings.enc.json; fi
           if [ -f docs/data/listings.json ]; then git add docs/data/listings.json; else git rm -q --cached --ignore-unmatch docs/data/listings.json; fi
-          git diff --cached --quiet || (git commit -m "Aktualizácia ponúk" && git push)
+          git diff --cached --quiet || (git commit -m "update" && git push)
 
       - uses: actions/configure-pages@v5
         if: always()

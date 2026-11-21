@@ -1,4 +1,4 @@
-name: Denný súhrn mailom
+name: digest
 
 on:
   schedule:
