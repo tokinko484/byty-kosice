@@ -77,6 +77,15 @@ const ago = iso => { const m = Math.round((Date.now() - new Date(iso)) / 60000);
   if (m < 60) return `pred ${m} min`; const h = Math.round(m/60); if (h < 24) return `pred ${h} h`;
   const d = Math.round(h/24); return d === 1 ? 'včera' : `pred ${d} dňami`; };
 
+// kontrola sa spúšťa každých 15 min (:00, :15, :30, :45), výsledky sú na webe asi o 2 min neskôr
+function nextRun(){
+  const q = 15 * 60e3, now = Date.now();
+  const next = Math.ceil(now / q) * q + 2 * 60e3;
+  const at = next - q > now ? next - q : next;   // ak ešte beží predošlá, ukáž tú
+  const min = Math.max(1, Math.round((at - now) / 60e3));
+  const hhmm = new Date(at).toLocaleTimeString('sk-SK', {hour:'2-digit', minute:'2-digit'});
+  return `~${hhmm} (o ${min} min)`;
+}
 function chip(label, on, fn){ const b = document.createElement('button'); b.className = 'chip' + (on ? ' on' : ''); b.textContent = label; b.onclick = fn; return b; }
 function setF(k, v){ st[k] = v; store.set('filters', st); render(); }
 
@@ -196,7 +205,7 @@ async function load(){
     const stEl = document.getElementById('status');
     if (s){
       const src = Object.entries(s.sources).map(([n, v]) => `${n} <b class="${v.ok ? 'ok' : 'err'}">${v.ok ? '✓' : '✗'}</b>`).join(' · ');
-      stEl.innerHTML = `Posledná kontrola ${ago(s.checked_at)} · ${src}`;
+      stEl.innerHTML = `Posledná kontrola ${ago(s.checked_at)} · ďalšia ${nextRun()} · ${src}`;
     } else stEl.textContent = 'Zatiaľ bez kontroly';
     render();
   }catch(e){ document.getElementById('status').textContent = 'Nepodarilo sa načítať dáta.'; }
@@ -204,6 +213,7 @@ async function load(){
 }
 load();
 setInterval(load, 5 * 60e3);
+setInterval(() => { if (STATUS) load(); }, 60e3);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
 </script>
 </body>
