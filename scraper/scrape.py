@@ -307,10 +307,87 @@ def scrape_topreality() -> list[dict]:
     return out
 
 
+BEZREALITKY_QUERY = """
+query($offset:Int){ listAdverts(offerType:[PRONAJEM], estateType:[BYT], limit:60, offset:$offset,
+  order:TIMEORDER_DESC, currency:EUR,
+  boundaryPoints:[{lat:48.80,lng:21.10},{lat:48.80,lng:21.40},{lat:48.62,lng:21.40},{lat:48.62,lng:21.10},{lat:48.80,lng:21.10}]){
+  totalCount list { id uri disposition surface price charges currency address(locale:SK) mainImage{ url(filter:RECORD_THUMB) } } } }
+"""
+
+
+def scrape_bezrealitky() -> list[dict]:
+    """Bezrealitky.sk – priamo od majiteľov (verejné GraphQL API, oblasť Košíc)."""
+    r = S.post("https://api.bezrealitky.cz/graphql/", json={"query": BEZREALITKY_QUERY, "variables": {"offset": 0}},
+               headers={"Origin": "https://www.bezrealitky.sk", "Referer": "https://www.bezrealitky.sk/"}, timeout=30)
+    r.raise_for_status()
+    data = (r.json().get("data") or {}).get("listAdverts") or {}
+    out = []
+    for a in data.get("list", []):
+        disp = (a.get("disposition") or "").upper()
+        rooms = "1,5" if re.search(r"1_5|1_1", disp) else "2" if re.search(r"DISP_2", disp) else None
+        address = a.get("address") or ""
+        surface = a.get("surface")
+        title = f"{disp.replace('DISP_', '').replace('_IZB', '-izbový').replace('_', ',')} byt, {surface or '?'} m² – {address.split(',')[0]}"
+        price = a.get("price")
+        out.append({
+            "id": "bezr:" + str(a["id"]), "source": "Bezrealitky", "title": title,
+            "desc": f"Poplatky: {a.get('charges')} €" if a.get("charges") else "",
+            "price": int(price) if price else None, "rooms": rooms, "area": float(surface) if surface else None,
+            "location": address, "url": f"https://www.bezrealitky.sk/nehnutelnosti-byty-domy/{a.get('uri')}",
+            "image": ((a.get("mainImage") or {}).get("url")), "posted": None,
+            "text_for_filter": title + " " + address,
+        })
+    return out
+
+
+def scrape_bazar() -> list[dict]:
+    """Bazar.sk – najnovšie prenájmy 1- a 2-izbových bytov z celého SK, filtrované na Košice."""
+    out = []
+    for cat in ("2-izbove-byty", "1-izbove-byty"):
+        soup = BeautifulSoup(get(f"https://reality.bazar.sk/byty/{cat}/prenajom/").text, "html.parser")
+        for card in soup.select(".hmr-card"):
+            loc_el = card.select_one(".location")
+            loc = loc_el.get_text(" ", strip=True) if loc_el else ""
+            if "košice" not in loc.lower():
+                continue
+            a = card.select_one("h2.title")
+            a = a.find_parent("a") if a else None
+            link = next((x.get("href") for x in card.select("a") if re.search(r"/\d{5,}-", x.get("href", ""))), None)
+            if not link:
+                continue
+            m = re.search(r"/(\d{5,})-", link)
+            title_el = card.select_one("h2.title")
+            title = title_el.get_text(" ", strip=True) if title_el else ""
+            sub = card.select_one(".subtitle")
+            desc = sub.get_text(" ", strip=True) if sub else ""
+            price_el = card.select_one(".price")
+            img = card.select_one("img.ad-photo")
+            img_url = (img.get("data-src") or img.get("src")) if img else None
+            if img_url and img_url.startswith("data:"):
+                img_url = None
+            rooms = detect_rooms(title, desc)
+            if cat == "1-izbove-byty":
+                if not RE_15.search(title + " " + desc):
+                    continue
+                rooms = "1,5"
+            out.append({
+                "id": "bazar:" + m.group(1), "source": "Bazar.sk", "title": title, "desc": desc[:300],
+                "price": parse_price(price_el.get_text(" ", strip=True) if price_el else ""),
+                "rooms": rooms or ("2" if cat == "2-izbove-byty" else None), "area": parse_area(title + " " + desc),
+                "location": loc, "url": urljoin("https://reality.bazar.sk/", link),
+                "image": urljoin("https://reality.bazar.sk/", img_url) if img_url else None,
+                "posted": None, "text_for_filter": title + " " + desc + " " + loc,
+            })
+        time.sleep(1.5)
+    return out
+
+
 SOURCES = {
     "Bazoš": scrape_bazos,
     "Nehnuteľnosti": scrape_nehnutelnosti,
     "TopReality": scrape_topreality,
+    "Bezrealitky": scrape_bezrealitky,
+    "Bazar.sk": scrape_bazar,
 }
 
 
