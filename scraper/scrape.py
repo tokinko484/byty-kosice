@@ -38,8 +38,12 @@ FAIL_ALERT_AFTER = 8                               # po koľkých zlyhaniach zdr
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "docs" / "data"
-LISTINGS_FILE = DATA_DIR / "listings.json"
+LISTINGS_FILE = DATA_DIR / "listings.json"          # nešifrovaná verzia (len bez hesla)
 STATUS_FILE = DATA_DIR / "status.json"
+ENC_LISTINGS_FILE = DATA_DIR / "listings.enc.json"  # šifrovaná verzia (AES-GCM, heslo SITE_PASSWORD)
+ENC_STATUS_FILE = DATA_DIR / "status.enc.json"
+SITE_PASSWORD = os.getenv("SITE_PASSWORD", "")
+PBKDF2_ITER = 600_000
 STATE_FILE = DATA_DIR / "state.json"   # počítadlá chýb zdrojov
 
 SITE_URL = os.getenv("SITE_URL", "")
@@ -56,6 +60,57 @@ NOW = datetime.now(timezone.utc)
 
 def log(*a):
     print(*a, flush=True)
+
+
+# ---------------------------------------------------------------- šifrovanie dát pre web
+def _key(password: str, salt: bytes, iterations: int) -> bytes:
+    import hashlib
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations, dklen=32)
+
+
+def encrypt_json(obj) -> str:
+    import base64
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    salt, iv = os.urandom(16), os.urandom(12)
+    ct = AESGCM(_key(SITE_PASSWORD, salt, PBKDF2_ITER)).encrypt(iv, json.dumps(obj, ensure_ascii=False).encode(), None)
+    b = lambda x: base64.b64encode(x).decode()  # noqa: E731
+    return json.dumps({"v": 1, "iter": PBKDF2_ITER, "salt": b(salt), "iv": b(iv), "ct": b(ct)})
+
+
+def decrypt_json(text: str):
+    import base64
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    d = json.loads(text)
+    u = base64.b64decode
+    pt = AESGCM(_key(SITE_PASSWORD, u(d["salt"]), d["iter"])).decrypt(u(d["iv"]), u(d["ct"]), None)
+    return json.loads(pt)
+
+
+def load_listings() -> list[dict] | None:
+    """Vráti uložené inzeráty, alebo None ak ešte neexistujú."""
+    if SITE_PASSWORD and ENC_LISTINGS_FILE.exists():
+        try:
+            return decrypt_json(ENC_LISTINGS_FILE.read_text("utf-8"))
+        except Exception:  # noqa: BLE001 – zmenené heslo
+            log("Nedá sa dešifrovať uložené dáta (zmenené heslo?) – začínam odznova bez upozornení")
+            return None
+    if LISTINGS_FILE.exists():  # pôvodný nešifrovaný súbor (prechod na heslo)
+        return json.loads(LISTINGS_FILE.read_text("utf-8"))
+    return None
+
+
+def save_data(listings: list[dict], status: dict, changed: bool):
+    if SITE_PASSWORD:
+        if changed or not ENC_LISTINGS_FILE.exists():
+            ENC_LISTINGS_FILE.write_text(encrypt_json(listings), "utf-8")
+        ENC_STATUS_FILE.write_text(encrypt_json(status), "utf-8")
+        for f in (LISTINGS_FILE, STATUS_FILE):  # nešifrované verzie zmazať
+            f.unlink(missing_ok=True)
+    else:
+        log("UPOZORNENIE: SITE_PASSWORD nie je nastavené – dáta sú nešifrované")
+        if changed or not LISTINGS_FILE.exists():
+            LISTINGS_FILE.write_text(json.dumps(listings, ensure_ascii=False, indent=1), "utf-8")
+        STATUS_FILE.write_text(json.dumps(status, ensure_ascii=False, indent=1), "utf-8")
 
 
 class NotFound(RuntimeError):
@@ -544,7 +599,7 @@ def send_mail(subject: str, body_html: str) -> bool:
 
 
 def digest():
-    listings = json.loads(LISTINGS_FILE.read_text("utf-8")) if LISTINGS_FILE.exists() else []
+    listings = load_listings() or []
     since = NOW - timedelta(hours=24)
     new = [x for x in listings if not x.get("dup_of") and x.get("active", True)
            and datetime.fromisoformat(x["first_seen"]) >= since]
@@ -567,8 +622,10 @@ def digest():
 # ---------------------------------------------------------------- hlavný beh
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    first_run = not LISTINGS_FILE.exists()
-    old = {x["id"]: x for x in (json.loads(LISTINGS_FILE.read_text("utf-8")) if not first_run else [])}
+    stored = load_listings()
+    first_run = stored is None
+    old = {x["id"]: x for x in (stored or [])}
+    old_json = json.dumps(stored, ensure_ascii=False, sort_keys=True) if stored is not None else None
     state = json.loads(STATE_FILE.read_text("utf-8")) if STATE_FILE.exists() else {"fails": {}}
     state.setdefault("initialized", sorted({x["source"] for x in old.values()}))
 
@@ -639,7 +696,7 @@ def main():
             if not dup and not repost:
                 new_items.append(x)
             elif repost:
-                log("Znovu pridaný inzerát (neposielam):", x["title"][:60])
+                log("Znovu pridaný inzerát – neposielam")
 
     # zmiznuté inzeráty (len pri zdrojoch, ktoré dnes fungovali)
     for lid, e in list(merged.items()):
@@ -654,12 +711,10 @@ def main():
     listings = sorted(merged.values(), key=lambda x: x["first_seen"], reverse=True)
     prev_initialized = set(state["initialized"])
     state["initialized"] = sorted(prev_initialized | ok_sources)
-    new_json = json.dumps(listings, ensure_ascii=False, indent=1)
-    if not LISTINGS_FILE.exists() or LISTINGS_FILE.read_text("utf-8") != new_json:
-        LISTINGS_FILE.write_text(new_json, "utf-8")
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1), "utf-8")
     status["active"] = sum(1 for x in listings if x.get("active") and not x.get("dup_of"))
-    STATUS_FILE.write_text(json.dumps(status, ensure_ascii=False, indent=1), "utf-8")
+    changed = json.dumps(listings, ensure_ascii=False, sort_keys=True) != old_json
+    save_data(listings, status, changed)
 
     if first_run:
         log(f"Prvý beh – uložených {status['active']} ponúk, upozornenia neposielam")
