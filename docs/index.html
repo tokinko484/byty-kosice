@@ -15,6 +15,9 @@
   header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 14px calc(8px) ;padding-top:max(10px,env(safe-area-inset-top))}
   h1{font-size:18px;margin:0 0 2px;display:flex;gap:8px;align-items:baseline}
   h1 small{font-weight:500;color:var(--mute);font-size:13px}
+  #refresh{margin-left:auto;align-self:center;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;width:36px;height:32px;font-size:18px;line-height:1;cursor:pointer;flex:none}
+  #refresh.spin{animation:spin .8s linear infinite;pointer-events:none;opacity:.7}
+  @keyframes spin{to{transform:rotate(360deg)}}
   .status{font-size:12px;color:var(--mute)}
   .status b.ok{color:var(--good)} .status b.err{color:var(--bad)}
   .bar{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;scrollbar-width:none}
@@ -55,7 +58,7 @@
   <input id="pw" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Heslo" autofocus>
   <button type="submit">Otvoriť</button><div class="err" id="pwerr"></div></form></div>
 <header>
-  <h1>🏠 Byty Košice <small id="count"></small></h1>
+  <h1>🏠 Byty Košice <small id="count"></small><button id="refresh" type="button" title="Obnoviť ponuky" aria-label="Obnoviť ponuky">↻</button></h1>
   <div class="status" id="status">Načítavam…</div>
   <div class="bar" id="f-rooms"></div>
   <div class="bar" id="f-more"></div>
@@ -213,6 +216,12 @@ async function load(){
   return true;
 }
 load();
+document.getElementById('refresh').addEventListener('click', async e => {
+  const b = e.currentTarget, t0 = Date.now();
+  b.classList.add('spin');
+  await load();
+  setTimeout(() => b.classList.remove('spin'), Math.max(0, 500 - (Date.now() - t0)));
+});
 setInterval(load, 5 * 60e3);
 setInterval(() => { if (STATUS) load(); }, 60e3);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
