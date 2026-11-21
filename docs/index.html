@@ -143,11 +143,17 @@ document.addEventListener('click', e => {
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const keyCache = {};
 async function decrypt(enc, pw){
-  const ck = enc.salt + enc.iter;
+  const ck = enc.salt + enc.iter + pw;
   if (!keyCache[ck]){
-    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
-    keyCache[ck] = await crypto.subtle.deriveKey({name:'PBKDF2', salt:b64(enc.salt), iterations:enc.iter, hash:'SHA-256'},
-      base, {name:'AES-GCM', length:256}, false, ['decrypt']);
+    const saved = store.get('key', null);  // odvodený kľúč z minula → otvorí sa hneď
+    if (saved && saved.ck === ck){
+      keyCache[ck] = await crypto.subtle.importKey('raw', b64(saved.raw), 'AES-GCM', false, ['decrypt']);
+    } else {
+      const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
+      const bits = new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2', salt:b64(enc.salt), iterations:enc.iter, hash:'SHA-256'}, base, 256));
+      keyCache[ck] = await crypto.subtle.importKey('raw', bits, 'AES-GCM', false, ['decrypt']);
+      keyCache[ck].bits = btoa(String.fromCharCode(...bits));
+    }
   }
   const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:b64(enc.iv)}, keyCache[ck], b64(enc.ct));
   return JSON.parse(new TextDecoder().decode(pt));
@@ -172,7 +178,12 @@ document.getElementById('lockform').addEventListener('submit', async e => {
   e.preventDefault();
   PW = document.getElementById('pw').value.trim();
   document.getElementById('pwerr').textContent = 'Overujem…';
-  if (await load()){ store.set('pw', PW); document.getElementById('lock').hidden = true; }
+  if (await load()){
+    store.set('pw', PW);
+    const ck = Object.keys(keyCache).find(k => keyCache[k].bits);
+    if (ck) store.set('key', {ck, raw: keyCache[ck].bits});
+    document.getElementById('lock').hidden = true;
+  }
 });
 async function load(){
   let l, s;
