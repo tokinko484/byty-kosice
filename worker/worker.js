@@ -5,6 +5,7 @@
 const DEFAULT_DATA_URL = "https://tokinko484.github.io/k-watch-7f3/data/ai.enc.json";
 const DEFAULT_SITE_URL = "https://tokinko484.github.io/k-watch-7f3/";
 let cachedModel = null;
+let modelList = null;
 
 export default {
   async fetch(request, env, ctx) {
@@ -15,7 +16,7 @@ export default {
       return new Response("forbidden", { status: 403 });
     }
     const update = await request.json().catch(() => null);
-    if (update?.message) ctx.waitUntil(handleMessage(update.message, env).catch(e => console.log("error", e?.stack || e)));
+    if (update?.message) await handleMessage(update.message, env).catch(e => console.log("error", e?.stack || e));
     return new Response("ok");
   },
 };
@@ -41,6 +42,9 @@ async function setup(url, env) {
     { command: "najnovsie", description: "5 najnovších ponúk" },
     { command: "najlacnejsie", description: "5 najlacnejších ponúk" },
     { command: "stav", description: "Kedy bola posledná kontrola" },
+    { command: "web", description: "Odkaz na web s ponukami" },
+    { command: "sync", description: "Skontrolovať portály hneď" },
+    { command: "clear", description: "Vymazať chat (posledných 48 h)" },
     { command: "pomoc", description: "Čo viem" },
   ] });
   return new Response(JSON.stringify(res), { headers: { "content-type": "application/json" } });
@@ -90,9 +94,28 @@ async function handleMessage(msg, env) {
   if (cmd === "/start" || cmd === "/pomoc" || cmd === "/help") {
     return send(env, chatId,
       "Ahoj! Pýtaj sa ma na sledované byty, napr.:\n• Ktorý 2-izbák je najlacnejší?\n• Čo pribudlo dnes?\n• Je niečo na Terase do 650 €?\n\n" +
-      "Príkazy: /najnovsie, /najlacnejsie, /stav\n\nNové ponuky ti stále posielam automaticky.");
+      "Príkazy: /najnovsie, /najlacnejsie, /stav, /web, /sync, /clear\n\nNové ponuky ti stále posielam automaticky.");
   }
 
+  if (cmd === "/web") return send(env, chatId, "🌐 Web s ponukami (heslo poznáte):\n" + (env.SITE_URL || DEFAULT_SITE_URL));
+  if (cmd === "/sync") {
+    if (!env.GITHUB_TOKEN) return send(env, chatId, "Na /sync chýba GITHUB_TOKEN v Cloudflare.");
+    const r = await fetch("https://api.github.com/repos/tokinko484/k-watch-7f3/dispatches", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + env.GITHUB_TOKEN, "Accept": "application/vnd.github+json", "User-Agent": "k-watch-bot" },
+      body: JSON.stringify({ event_type: "sync", client_payload: { chat_id: String(chatId) } }),
+    });
+    return send(env, chatId, r.status === 204 ? "🔄 Spúšťam kontrolu, výsledok pošlem o 1–2 minúty." : "Nepodarilo sa spustiť kontrolu (HTTP " + r.status + ").");
+  }
+  if (cmd === "/clear") {
+    const top = msg.message_id;
+    for (let end = top; end > Math.max(0, top - 2000); end -= 100) {
+      const ids = [];
+      for (let i = Math.max(1, end - 99); i <= end; i++) ids.push(i);
+      await tg(env, "deleteMessages", { chat_id: chatId, message_ids: ids });
+    }
+    return;
+  }
   let data;
   try { data = await loadData(env); }
   catch (e) { return send(env, chatId, "Nepodarilo sa načítať ponuky, skús o chvíľu. (" + e.message + ")"); }
@@ -122,22 +145,23 @@ async function handleMessage(msg, env) {
 }
 
 // ------------------------------------------------------------------ Gemini
-async function pickModel(env) {
-  if (cachedModel) return cachedModel;
+async function listFlash(env) {
+  if (modelList) return modelList;
   const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", {
     headers: { "x-goog-api-key": env.GEMINI_API_KEY },
   });
   const j = await r.json();
-  const ok = (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent")
-    && /flash/.test(m.name) && !/lite|image|tts|live|audio|preview|exp/.test(m.name));
-  ok.sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true }));
-  cachedModel = ok[0]?.name.replace("models/", "") || "gemini-flash-latest";
-  return cachedModel;
+  const names = (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent")
+    && /flash/.test(m.name) && !/image|tts|live|audio|exp/.test(m.name)).map(m => m.name.replace("models/", ""));
+  const score = n => (/preview/.test(n) ? 1 : 0) + (/lite/.test(n) ? 0.5 : 0);
+  names.sort((a, b) => score(a) - score(b) || b.localeCompare(a, undefined, { numeric: true }));
+  modelList = names;
+  return names;
 }
 
-async function callGemini(env, model, system, prompt) {
+async function callGemini(env, model, system, prompt, ms) {
   return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: "POST",
+    method: "POST", signal: AbortSignal.timeout(ms),
     headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
@@ -150,24 +174,39 @@ async function callGemini(env, model, system, prompt) {
 async function askGemini(env, question, data) {
   const now = new Date().toLocaleString("sk-SK", { timeZone: "Europe/Bratislava" });
   const system =
-    "Si pomocník páru, ktorý hľadá na prenájom celý 1,5–2-izbový byt v Košiciach do 680 €/mesiac. " +
+    "Si pomocník páru, ktorý hľadá na prenájom celý 1,5–2-izbový byt v Košiciach do 700 €/mesiac. " +
     "Odpovedaj po slovensky, stručne a vecne, obyčajným textom bez Markdownu (žiadne hviezdičky ani #). " +
     "Pri konkrétnych bytoch vždy uveď cenu, počet izieb, lokalitu a celý odkaz (url). " +
     "Vychádzaj LEN z priložených dát; ak niečo v dátach nie je, povedz to. Nevymýšľaj si. " +
     "active=false znamená, že inzerát zmizol. first_seen je čas, kedy sme inzerát našli (UTC). " +
     `Teraz je ${now}. Web s prehľadom: ${env.SITE_URL || DEFAULT_SITE_URL}`;
-  const prompt = `DÁTA (JSON):\n${JSON.stringify(data)}\n\nOTÁZKA: ${question}`;
+  const slim = { status: data.status, listings: data.listings.filter(x => x.active !== false).map(({ desc, also, gone_since, ...x }) => x) };
+  const prompt = `DÁTA (JSON):\n${JSON.stringify(slim)}\n\nOTÁZKA: ${question}`;
 
-  let model = env.GEMINI_MODEL || cachedModel || "gemini-flash-latest";
-  let r = await callGemini(env, model, system, prompt);
-  if (r.status === 404 || r.status === 400) {
-    cachedModel = null;
-    model = await pickModel(env);
-    r = await callGemini(env, model, system, prompt);
+  const started = Date.now();
+  let tried = [...new Set([env.GEMINI_MODEL, cachedModel, "gemini-flash-lite-latest", "gemini-flash-latest"].filter(Boolean))];
+  let lastErr = "neznáma chyba";
+  for (let i = 0; i < tried.length && i < 8 && Date.now() - started < 40000; i++) {
+    const model = tried[i];
+    const left = 45000 - (Date.now() - started);
+    let r;
+    try { r = await callGemini(env, model, system, prompt, Math.min(20000, left)); }
+    catch (e) { lastErr = "AI neodpovedala včas"; if (cachedModel === model) cachedModel = null; continue; }
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      cachedModel = model;
+      const out = (j.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim();
+      if (out) return out;
+      lastErr = "prázdna odpoveď";
+    } else {
+      lastErr = r.status === 429 ? "limit zadarmo je vyčerpaný" : (j.error?.message?.slice(0, 120) || "HTTP " + r.status);
+      if (cachedModel === model) cachedModel = null;
+      if (r.status >= 500 || r.status === 429) await new Promise(res => setTimeout(res, 700));
+    }
+    if (i === tried.length - 1 && tried.length < 8) {   // pridaj ďalšie dostupné Flash modely
+      const more = (await listFlash(env).catch(() => [])).filter(n => !tried.includes(n));
+      tried = tried.concat(more);
+    }
   }
-  if (r.status === 429) throw new Error("denný limit zadarmo je vyčerpaný");
-  const j = await r.json();
-  if (!r.ok) throw new Error(j.error?.message?.slice(0, 120) || "HTTP " + r.status);
-  cachedModel = model;
-  return (j.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim();
+  throw new Error(lastErr);
 }
