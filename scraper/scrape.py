@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Byty Košice – zbiera inzeráty na prenájom 1,5–2 izbových bytov a posiela upozornenia.
+"""Byty Košice – zbiera inzeráty na prenájom 1,5–3 izbových bytov a posiela upozornenia.
 
 Zdroje:
   * Bazoš (reality.bazos.sk)
@@ -33,6 +33,10 @@ from bs4 import BeautifulSoup
 MAX_PRICE = int(os.getenv("MAX_PRICE", "700"))   # €/mesiac – horná hranica
 GOOD_PRICE = int(os.getenv("GOOD_PRICE", "650"))  # pod touto cenou = „dobrá cena“
 MIN_PRICE = 200                                    # nižšie ceny sú zvyčajne nezmysel/izby
+ALLIN_EXTRA = 150                                  # cena „vrátane energií“ môže byť o toľko vyššia
+SOURCE_MAX = MAX_PRICE + ALLIN_EXTRA               # cenový strop pri sťahovaní zo zdrojov
+ROOMS_OK = ("1,5", "2", "3")                       # sledované byty ("?" = počet izieb neuvedený)
+FILTER_VERSION = 2                                 # zmena filtrov → jednorazovo bez záplavy upozornení
 KEEP_GONE_DAYS = 14                                # ako dlho držať zmiznuté inzeráty
 FAIL_ALERT_AFTER = 8                               # po koľkých zlyhaniach zdroja poslať varovanie
 
@@ -125,7 +129,7 @@ def save_ai_data(listings: list[dict], status: dict):
     import hashlib
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     keep_keys = ("source", "title", "price", "rooms", "area", "location", "url", "first_seen", "active",
-                 "gone_since", "price_drop_from", "also", "desc")
+                 "gone_since", "price_drop_from", "also", "desc", "all_in")
     items = [{k: (x.get(k)[:200] if k == "desc" and x.get(k) else x.get(k)) for k in keep_keys if x.get(k) not in (None, "", [])}
              for x in listings if not x.get("dup_of")]
     payload = json.dumps({"status": status, "listings": items}, ensure_ascii=False).encode()
@@ -181,8 +185,15 @@ def strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
 
 
-RE_15 = re.compile(r"(?<![\d,.])1\s*[,.]\s*5\s*[-–]?\s*(izb|izieb)|(?<![\d,.])1[,.]5-?i\b|jedenapol", re.I)
-RE_2 = re.compile(r"(?<![\d,.])2\s*[-–]?\s*(izb|izieb)|(?<![\d,.])2-?i\b|dvojizb|dvoj-izb|dvojgars", re.I)
+RE_15 = re.compile(r"(?<![\d,.])1\s*[,.]\s*5\s*\.?\s*[-–]?\s*(izb|izieb)|(?<![\d,.])1[,.]5-?i\b|jedenapol", re.I)
+RE_2 = re.compile(r"(?<![\d,.])2\s*(?:[,.]\s*5)?\s*\.?\s*[-–]?\s*(izb|izieb)|(?<![\d,.])2(?:[,.]5)?-?i\b|dvojizb|dvoj-izb|"
+                  r"dvojgars|(?<![\d+])2\s*\+\s*(1|kk)\b|\b(one|1)[- ]?bedroom\b", re.I)
+RE_3 = re.compile(r"(?<![\d,.])3\s*(?:[,.]\s*5)?\s*\.?\s*[-–]?\s*(izb|izieb)|(?<![\d,.])3(?:[,.]5)?-?i\b|trojizb|troj-izb|"
+                  r"(?<![\d+])3\s*\+\s*(1|kk)\b|\b(two|2)[- ]?bedrooms?\b", re.I)
+RE_4 = re.compile(r"(?<![\d,.])[4-6]\s*(?:[,.]\s*5)?\s*\.?\s*[-–]?\s*(izb|izieb)|(?<![\d,.])[4-6]-?i\b|stvorizb|patizb|"
+                  r"(?<![\d+])[4-6]\s*\+\s*(1|kk)\b|\b(three|four|[3-5])[- ]?bedrooms?\b", re.I)
+RE_1 = re.compile(r"garson|garzon|(?<![\d,.])1\s*\.?\s*[-–]?\s*(izb|izieb)|jednoizb|(?<![\d,.])1-?i\b|"
+                  r"(?<![\d+])1\s*\+\s*(1|kk)\b|\b1kk\b|\bstudio\b", re.I)
 # (texty sa porovnávajú bez diakritiky)
 RE_SEEK = re.compile(r"\b(hladam|hladame|kupim|vymenim|vymena|dopyt)\b")
 RE_ROOM_ONLY = re.compile(
@@ -192,14 +203,37 @@ RE_ROOM_ONLY = re.compile(
 
 
 def detect_rooms(*texts: str) -> str | None:
+    """Počet izieb z textu (prednosť má názov). "1" a "4" sa vracajú preto, aby ich filter vedome vyradil."""
     for t in texts:
         if not t:
             continue
-        if RE_15.search(t):
-            return "1,5"
-        if RE_2.search(t):
-            return "2"
+        t = strip_accents(t)
+        for pat, val in ((RE_15, "1,5"), (RE_2, "2"), (RE_3, "3"), (RE_4, "4"), (RE_1, "1")):
+            if pat.search(t):
+                return val
     return None
+
+
+def has_rooms(t: str) -> bool:
+    return bool(RE_15.search(t) or RE_2.search(t) or RE_3.search(t))
+
+
+RE_ALLIN = re.compile(
+    r"vratane (vsetkych )?(energii|poplatkov|nakladov|sluzieb)|s energiami|vratane energ|energie (su )?v cene|"
+    r"v cene (su )?(aj )?energie|cena (je )?(vratane|so|s) energ|all[- ]?inclusive|including (all )?(utilities|bills|energ)|"
+    r"(utilities|bills|energies) (are )?included")
+RE_PER_PERSON = re.compile(r"(za|na) osobu|/ ?osob[au]\b|za lozko|per person")
+RE_COSTS_NEAR = re.compile(r"energi|zaloh|poplat|sluzb|voda|internet|vratane|utilit|bills")
+
+
+def per_person_price(full: str) -> bool:
+    """Cena za osobu/lôžko = izba. „Energie 50 € na osobu“ pri celom byte sa nepočíta."""
+    for m in RE_PER_PERSON.finditer(full):
+        if m.group(0) == "za lozko":
+            return True
+        if not RE_COSTS_NEAR.search(full[max(0, m.start() - 40):m.start()]):
+            return True
+    return False
 
 
 def parse_price(text: str | None) -> int | None:
@@ -231,7 +265,7 @@ def norm_title(t: str) -> str:
 def scrape_bazos() -> list[dict]:
     base = "https://reality.bazos.sk/prenajmu/byt/"
     params = ("?hledat=&rubriky=reality&hlokalita=04001&humkreis=10"
-              f"&cenaod=&cenado={MAX_PRICE}&order=")
+              f"&cenaod=&cenado={SOURCE_MAX}&order=")
     out = []
     for offset in range(0, 400, 40):  # Bazoš zobrazuje 40 inzerátov na stránku
         url = base + (f"{offset}/" if offset else "") + params
@@ -334,9 +368,10 @@ def _nehnutelnosti_page(url: str) -> list[dict]:
 
 def scrape_nehnutelnosti() -> list[dict]:
     out: list[dict] = []
-    for cat, pages in (("2-izbove-byty", 8), ("1-izbove-byty", 4)):
+    for cat, pages in (("2-izbove-byty", 4), ("1-izbove-byty", 3), ("3-izbove-byty", 3)):
         for p in range(1, pages + 1):
-            url = f"https://www.nehnutelnosti.sk/vysledky/{cat}/kosice/prenajom?order=NEWEST" + (f"&page={p}" if p > 1 else "")
+            url = (f"https://www.nehnutelnosti.sk/vysledky/{cat}/kosice/prenajom?order=NEWEST&priceTo={SOURCE_MAX}"
+                   + (f"&page={p}" if p > 1 else ""))
             try:
                 page = _nehnutelnosti_page(url)
             except NotFound:
@@ -356,9 +391,11 @@ def scrape_nehnutelnosti() -> list[dict]:
 
 def scrape_topreality() -> list[dict]:
     out = []
-    for page in range(1, 6):
-        url = ("https://www.topreality.sk/vyhladavanie-nehnutelnosti.html?form=3&type%5B%5D=102"
-               f"&type%5B%5D=103&type%5B%5D=108&obec=&q=Ko%C5%A1ice&cena_do={MAX_PRICE}&searchType=string"
+    # 102 1-izb., 103 2-izb., 104 3-izb., 108 dvojgarsónka, 107 iný byt, 109 mezonet, 110 apartmán
+    types = "".join(f"&type%5B%5D={t}" for t in (102, 103, 104, 108, 107, 109, 110))
+    for page in range(1, 7):
+        url = ("https://www.topreality.sk/vyhladavanie-nehnutelnosti.html?form=3" + types
+               + f"&obec=&q=Ko%C5%A1ice&cena_do={SOURCE_MAX}&searchType=string"
                + (f"&page={page}" if page > 1 else ""))
         try:
             soup = BeautifulSoup(get(url).text, "html.parser")
@@ -422,7 +459,8 @@ def scrape_bezrealitky() -> list[dict]:
     out = []
     for a in data.get("list", []):
         disp = (a.get("disposition") or "").upper()
-        rooms = "1,5" if re.search(r"1_5|1_1", disp) else "2" if re.search(r"DISP_2", disp) else None
+        rooms = ("1,5" if re.search(r"1_5|1_1", disp) else "2" if re.search(r"DISP_2", disp)
+                 else "3" if re.search(r"DISP_3", disp) else (disp or "iné"))
         address = a.get("address") or ""
         surface = a.get("surface")
         title = f"{disp.replace('DISP_', '').replace('_IZB', '-izbový').replace('_', ',')} byt, {surface or '?'} m² – {address.split(',')[0]}"
@@ -491,32 +529,56 @@ SOURCES = {
 
 # ---------------------------------------------------------------- filter
 def keep(x: dict) -> bool:
-    if x.get("price") is None or not (MIN_PRICE <= x["price"] <= MAX_PRICE):
-        return False
-    if x.get("rooms") not in ("1,5", "2"):
+    price = x.get("price")
+    if price is None or price < MIN_PRICE:
         return False
     t = strip_accents(x["title"].lower())
+    full = strip_accents((x["title"] + " " + (x.get("desc") or "")).lower())
+    all_in = bool(RE_ALLIN.search(full))
+    if price > MAX_PRICE and not (all_in and price <= SOURCE_MAX):
+        return False
+    if all_in:
+        x["all_in"] = True
+    rooms = x.get("rooms")
+    if rooms is None:
+        # počet izieb neuvedený: ponechať, ak to nevyzerá na izbu, garsónku či dopyt
+        if (x.get("area") and x["area"] < 35) or RE_ROOM_ONLY.search(t) or re.search(r"\b(izba|izbu|izby|izieb)\b", t) \
+                or RE_SEEK.search(full[:200]):
+            return False
+        x["rooms"] = "?"
+    elif rooms not in ROOMS_OK and rooms != "?":
+        return False
     if RE_SEEK.search(t):
         return False
-    if RE_ROOM_ONLY.search(t) and not (RE_2.search(t) or RE_15.search(t)):
+    if RE_ROOM_ONLY.search(t) and not has_rooms(t):
+        return False
+    if per_person_price(full):
         return False
     # miesto v izbe / spolubývanie aj keď je v názve „2-izbový byt“
-    full = strip_accents((x["title"] + " " + (x.get("desc") or "")).lower())
-    if re.search(r"miesto v izbe|miesto v byte|volne miesto|miesta v izbe|spolubyva|za osobu|na osobu|za lozko|\blozk|"
+    if re.search(r"miesto v izbe|miesto v byte|volne miesto|miesta v izbe|spolubyva|"
                  r"(prenajom|prenajmem|podnajom|ponukam|volna) (jednej |samostatnej |nepriechodnej |zariadenej |vacsej |mensej )*izb[yu]\b|"
-                 r"\bizb[ua] v (\d|byte|rodinnom|dome|zdielan)|nepriechodnej izby|samostatnej izby", full):
+                 r"\bizb[ua] v (\d|rodinnom|dome|zdielan)|nepriechodnej izby|samostatnej izby|"
+                 r"room for rent|\broom in (a|an|the)\b|flatmate|roommate|shared (flat|apartment)", full):
         return False
     # samostatná izba: v názve je „izba/izby/izbu“ bez počtu izieb bytu
-    if re.search(r"\b(izba|izbu|izby|izieb)\b", t) and not (RE_2.search(t) or RE_15.search(t)):
+    if re.search(r"\b(izba|izbu|izby|izieb)\b", t) and not has_rooms(t):
         return False
+    # Nehnuteľnosti (URL /kosice/) a Bezrealitky (oblasť Košíc) sú už lokalitou obmedzené
     if "kosice" not in strip_accents((x.get("location", "") + " " + x["text_for_filter"]).lower()) \
-            and x["source"] != "Bazoš":
+            and x["source"] not in ("Bazoš", "Nehnuteľnosti", "Bezrealitky"):
         return False
     return True
 
 
+# slová, ktoré má skoro každý názov – podľa nich sa dva rôzne byty nesmú zlúčiť
+GENERIC_WORDS = {"prenajom", "prenajmem", "prenajmu", "ponukam", "ponuka", "izbovy", "izboveho", "izbovom", "izbove",
+                 "kosice", "kosiciach", "kosic", "zariadeny", "zariadeneho", "zariadenom", "ciastocne", "novostavbe",
+                 "novostavba", "kompletne", "pekny", "krasny", "moderny", "rekonstrukcii", "zrekonstruovany",
+                 "balkonom", "loggiou", "lodziou", "sidlisko", "ulica", "ulici", "apartment", "apartman", "rent"}
+
+
 def title_words(t: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9]+", strip_accents(t.lower())) if len(w) >= 5}
+    return {w for w in re.findall(r"[a-z0-9]+", strip_accents(t.lower())) if len(w) >= 5 and w not in GENERIC_WORDS}
 
 
 def find_duplicate(x: dict, existing: dict) -> str | None:
@@ -525,12 +587,19 @@ def find_duplicate(x: dict, existing: dict) -> str | None:
     for eid, e in existing.items():
         if e["source"] == x["source"] or e.get("dup_of") or e.get("price") != x.get("price"):
             continue
+        rx, re_ = x.get("rooms"), e.get("rooms")
+        if rx and re_ and "?" not in (rx, re_) and rx != re_:
+            continue  # iný počet izieb = iný byt
+        if x.get("area") and e.get("area") and abs(x["area"] - e["area"]) > 1.5:
+            continue  # iná rozloha = iný byt
         if nt and nt == norm_title(e["title"]):
             return eid
         we = title_words(e["title"])
         sim = len(wx & we) / max(1, len(wx | we))
         same_area = x.get("area") and e.get("area") and abs(x["area"] - e["area"]) < 0.6
-        if sim >= 0.6 or (same_area and sim >= 0.3):
+        if same_area and sim >= 0.3:
+            return eid
+        if sim >= 0.6 and min(len(wx), len(we)) >= 2:  # zhoda len na 1 slove je náhoda
             return eid
     return None
 
@@ -589,8 +658,11 @@ def tg_handle_updates():
 
 def fmt_listing(x: dict) -> str:
     price = f"{x['price']} €" if x.get("price") else "cena ?"
+    if x.get("all_in"):
+        price += " vrátane energií"
     good = " 🔥" if x.get("price") and x["price"] <= GOOD_PRICE else ""
-    bits = [f"<b>{price}{good}</b> · {x['rooms']} izb."]
+    rooms = "izby neuvedené" if x.get("rooms") == "?" else f"{x['rooms']} izb."
+    bits = [f"<b>{price}{good}</b> · {rooms}"]
     if x.get("area"):
         bits.append(f"{x['area']:g} m²")
     lines = [" · ".join(bits), html.escape(x["title"][:150])]
@@ -756,6 +828,8 @@ def main():
     state["initialized"] = sorted(prev_initialized | ok_sources)
     old_max = state.get("max_price", 680)
     state["max_price"] = MAX_PRICE
+    filters_changed = state.get("filter_v") != FILTER_VERSION
+    state["filter_v"] = FILTER_VERSION
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1), "utf-8")
     status["active"] = sum(1 for x in listings if x.get("active") and not x.get("dup_of"))
     changed = json.dumps(listings, ensure_ascii=False, sort_keys=True) != old_json
@@ -780,6 +854,11 @@ def main():
             new_items = [x for x in new_items if (x.get("price") or 0) <= old_max]
         new_items.sort(key=lambda x: x.get("price") or 9999)
         log(f"Nové/zlacnené: {len(new_items)}")
+        if filters_changed and new_items:
+            # rozšírené filtre by naraz poslali všetky staršie ponuky, ktoré doteraz neprešli
+            tg_broadcast(f"🔧 Filtre rozšírené (3-izbové, byty bez uvedeného počtu izieb, ceny vrátane energií) – "
+                         f"pribudlo {len(new_items)} ponúk, nájdeš ich na webe." + (f"\n{SITE_URL}" if SITE_URL else ""))
+            new_items = []
         notify_new(new_items)
 
     # /sync z Telegramu – potvrdenie žiadateľovi
