@@ -72,7 +72,7 @@ const store = {
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
 let DATA = [], STATUS = null;
-const st = Object.assign({rooms:'all', max:700, src:'all', sort:'new', fav:false, hideSeen:false, gone:false}, store.get('filters', {}));
+const st = Object.assign({rooms:'all', max:700, src:'all', sort:'new', fav:false, hideSeen:false, gone:false, allin:false}, store.get('filters', {}));
 if (!st.v700) { st.max = 700; st.v700 = true; }
 let favs = new Set(store.get('favs', [])), seen = new Set(store.get('seen', []));
 
@@ -103,6 +103,7 @@ function renderFilters(){
   const sel = document.createElement('select'); sel.className = 'chip' + (st.src!=='all' ? ' on' : '');
   srcs.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s==='all' ? 'Všetky portály' : s; o.selected = st.src===s; sel.append(o); });
   sel.onchange = () => setF('src', sel.value); m.append(sel);
+  if (DATA.some(x => x.all_in && x.price > st.max)) m.append(chip(`+ vrátane energií do ${st.max + 150} €`, st.allin, () => setF('allin', !st.allin)));
   m.append(chip(`⭐ Obľúbené (${favs.size})`, st.fav, () => setF('fav', !st.fav)));
   m.append(chip('Skryť videné', st.hideSeen, () => setF('hideSeen', !st.hideSeen)));
   m.append(chip('Aj zmiznuté', st.gone, () => setF('gone', !st.gone)));
@@ -113,7 +114,7 @@ function render(){
   let items = DATA.filter(x => !x.dup_of)
     .filter(x => st.gone || x.active !== false)
     .filter(x => st.rooms==='all' || x.rooms===st.rooms)
-    .filter(x => (x.price ?? 0) <= st.max || (x.all_in && (x.price ?? 0) <= st.max + 150))
+    .filter(x => (x.price ?? 0) <= st.max || (st.allin && x.all_in && (x.price ?? 0) <= st.max + 150))
     .filter(x => st.src==='all' || x.source===st.src || (x.also||[]).some(a => a.source===st.src))
     .filter(x => !st.fav || favs.has(x.id))
     .filter(x => !st.hideSeen || !seen.has(x.id));
@@ -137,6 +138,8 @@ function render(){
         <div class="price">${x.price} €<span>/ mes.${x.all_in ? ' vrátane energií' : ''}</span></div>
         <div class="title">${esc(x.title)}</div>
         <div class="meta">${meta}</div>
+        ${(x.available || x.contact || x.advertiser) ? `<div class="meta">${[x.available ? 'Voľný od ' + esc(x.available) : '', x.contact ? '📞 ' + esc(x.contact) : '', esc(x.advertiser || '')].filter(Boolean).join(' · ')}</div>` : ''}
+        ${x.warning ? `<div class="meta" style="color:var(--bad)">⚠️ ${esc(x.warning)}</div>` : ''}
         <div class="meta">Pridané ${ago(x.first_seen)}</div>
         ${also}
         <div class="row">
