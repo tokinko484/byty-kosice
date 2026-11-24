@@ -54,7 +54,11 @@ jobs:
           git add docs/data/state.json
           if [ -f docs/data/listings.enc.json ]; then git add docs/data/listings.enc.json; fi
           if [ -f docs/data/listings.json ]; then git add docs/data/listings.json; else git rm -q --cached --ignore-unmatch docs/data/listings.json; fi
-          git diff --cached --quiet || (git commit -m "update" && git push)
+          git diff --cached --quiet && exit 0
+          git commit -q -m "update"
+          # medzitým mohol pribudnúť iný commit (ručné úpravy) → rebase a znova
+          for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q && exit 0; sleep 5; done
+          exit 1
 
       - uses: actions/configure-pages@v5
         if: always()
