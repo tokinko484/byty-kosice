@@ -5,7 +5,7 @@
   "TopReality": 0,
   "Bezrealitky": 0,
   "Bazar.sk": 9,
-  "Facebook": 7
+  "Facebook": 8
  },
  "initialized": [
   "Bazar.sk",
@@ -19,7 +19,7 @@
  "filter_v": 3,
  "fb": {
   "usage": {
-   "2026-11": 141
+   "2026-11": 159
   },
   "snapshot_at": "2026-11-24T14:55:20+00:00",
   "last_trigger": "2026-11-24T14:55:20+00:00",
