@@ -5,7 +5,7 @@
   "TopReality": 0,
   "Bezrealitky": 0,
   "Bazar.sk": 9,
-  "Facebook": 0
+  "Facebook": 1
  },
  "initialized": [
   "Bazar.sk",
@@ -19,7 +19,7 @@
  "filter_v": 3,
  "fb": {
   "usage": {
-   "2026-11": 51
+   "2026-11": 69
   },
   "snapshot_at": "2026-11-24T18:01:02+00:00",
   "last_trigger": "2026-11-24T18:01:02+00:00",
@@ -73,14 +73,16 @@
    "https://www.facebook.com/groups/575297962860739/"
   ],
   "usage_fix_1": true,
-  "queue": [],
+  "queue": [
+   "sd_mwv04ch0wd7jjlc03"
+  ],
   "counted": [
-   "sd_mwuthc0q1lhkttqj5h"
+   "sd_mwuthc0q1lhkttqj5h",
+   "sd_mwv04ch0wd7jjlc03"
   ],
   "rate": {
    "https://www.facebook.com/groups/rentflatkosice/": 3.0
-  },
-  "snapshot": "sd_mwv04ch0wd7jjlc03"
+  }
  },
  "backfill_20261124": true,
  "tg_pending": {}
