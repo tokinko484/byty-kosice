@@ -64,7 +64,7 @@
   <div class="bar" id="f-more"></div>
 </header>
 <main id="list"></main>
-<footer>Ponuky z Bazoša, Nehnuteľností (aj Reality.sk a Byty.sk), TopReality, Bezrealitky a Bazar.sk. Kontrola každých ~15 min.<br>⭐ a 👁 sa ukladajú len v tomto prehliadači.</footer>
+<footer><span id="srcinfo">Ponuky z realitných portálov a Facebook skupín.</span> Kontrola každých ~15 min.<br>⭐ a 👁 sa ukladajú len v tomto prehliadači.</footer>
 
 <script>
 const store = {
@@ -103,27 +103,48 @@ function renderFilters(){
   const sel = document.createElement('select'); sel.className = 'chip' + (st.src!=='all' ? ' on' : '');
   srcs.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s==='all' ? 'Všetky portály' : s; o.selected = st.src===s; sel.append(o); });
   sel.onchange = () => setF('src', sel.value); m.append(sel);
-  m.append(chip(`⭐ Obľúbené (${favs.size})`, st.fav, () => setF('fav', !st.fav)));
+  m.append(chip(`⭐ Obľúbené (${DATA.filter(x => favs.has(x.id)).length})`, st.fav, () => setF('fav', !st.fav)));
   m.append(chip('Skryť videné', st.hideSeen, () => setF('hideSeen', !st.hideSeen)));
   m.append(chip('Aj zmiznuté', st.gone, () => setF('gone', !st.gone)));
 }
 
+const F = {  // jednotlivé filtre (na vysvetlenie, prečo je zoznam prázdny)
+  gone:  x => st.gone || x.active !== false,
+  rooms: x => st.rooms==='all' || x.rooms===st.rooms,
+  price: x => (x.total ?? x.price ?? 0) <= st.max,
+  src:   x => st.src==='all' || x.source===st.src || (x.also||[]).some(a => a.source===st.src),
+  seen:  x => !st.hideSeen || !seen.has(x.id),
+};
+function resetFilters(){ Object.assign(st, {rooms:'all', max:700, src:'all', hideSeen:false, gone:false, fav:false}); store.set('filters', st); render(); }
+
 function render(){
   renderFilters();
-  let items = DATA.filter(x => !x.dup_of)
-    .filter(x => st.gone || x.active !== false)
-    .filter(x => st.rooms==='all' || x.rooms===st.rooms)
-    .filter(x => (x.total ?? x.price ?? 0) <= st.max)
-    .filter(x => st.src==='all' || x.source===st.src || (x.also||[]).some(a => a.source===st.src))
-    .filter(x => !st.fav || favs.has(x.id))
-    .filter(x => !st.hideSeen || !seen.has(x.id));
+  const base = DATA.filter(x => !x.dup_of);
+  // ⭐ Obľúbené = môj zoznam: ukáž všetky uložené, aj keď zmizli alebo nevyhovujú filtru
+  let items = st.fav ? DATA.filter(x => favs.has(x.id))
+                     : base.filter(x => Object.values(F).every(f => f(x)));
   items.sort(st.sort==='price' ? (a,b) => (a.total ?? a.price ?? 9999) - (b.total ?? b.price ?? 9999) : (a,b) => b.first_seen.localeCompare(a.first_seen));
   document.getElementById('count').textContent = `${items.length} ponúk`;
   const el = document.getElementById('list');
-  if (!items.length){ el.innerHTML = '<div class="empty">Žiadne ponuky pre tento filter.</div>'; return; }
+  if (!items.length){
+    let why = '';
+    if (st.fav) {
+      why = favs.size ? `Obľúbené ponuky (${favs.size}) už nie sú v dátach – zmizli pred viac ako 14 dňami.` : 'Zatiaľ nemáš žiadne obľúbené. Pridáš ich hviezdičkou ⭐.';
+    } else {
+      const names = {gone:'zmiznuté/mimo rozpočtu', rooms:'filter izieb', price:`cena nad ${st.max} €`, src:'iný portál', seen:'videné'};
+      const pool = base.filter(F.gone);
+      const hidden = Object.entries(F).map(([k, f]) => [k, pool.filter(x => !f(x)).length]).filter(([k, n]) => n && k !== 'gone');
+      const active = base.filter(x => x.active !== false).length;
+      why = active ? `Aktívnych ponúk je ${active}, skryli ich filtre: ${hidden.map(([k, n]) => `${names[k]} (${n})`).join(', ') || '—'}.`
+                   : 'Momentálne nie je žiadna aktívna ponuka, ktorá by spĺňala rozpočet a izby.';
+    }
+    el.innerHTML = `<div class="empty">Žiadne ponuky pre tento filter.<br><small>${esc(why)}</small><br><br><button class="chip" id="resetf">Zrušiť filtre</button></div>`;
+    document.getElementById('resetf').onclick = resetFilters;
+    return;
+  }
   el.innerHTML = items.map(x => {
     const isNew = Date.now() - new Date(x.first_seen) < 24*3600e3;
-    const badges = [x.active===false ? '<span class="b">zmizol</span>' : '',
+    const badges = [x.active===false ? `<span class="b">${x.gone_reason==='filter' ? 'mimo rozpočtu/filtra' : 'zmizol'}</span>` : '',
       isNew ? '<span class="b new">NOVÉ</span>' : '',
       (x.total ?? x.price ?? 9999) <= 650 ? '<span class="b good">do 650 €</span>' : '',
       x.price_drop_from ? `<span class="b drop">zlacnel z ${x.price_drop_from} €</span>` : '',
@@ -179,7 +200,9 @@ async function fetchData(){
   const get = u => fetch(u + '?t=' + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null);
   const encL = await get('data/listings.enc.json');
   if (!encL){ // nešifrovaná verzia (pred nastavením hesla)
-    return [await get('data/listings.json') || [], await get('data/status.json')];
+    const plain = await get('data/listings.json');
+    if (!plain) throw 'network';   // nič sa nenačítalo = výpadok, nie prázdny zoznam
+    return [plain, await get('data/status.json')];
   }
   if (!PW) throw 'locked';
   const encS = await get('data/status.enc.json');
@@ -205,13 +228,20 @@ document.getElementById('lockform').addEventListener('submit', async e => {
 async function load(){
   let l, s;
   try{ [l, s] = await fetchData(); }
-  catch(e){ PW = ''; showLock(e === 'locked' ? '' : 'Nesprávne heslo'); return false; }
+  catch(e){
+    if (e === 'network'){  // ponechaj posledné načítané ponuky
+      document.getElementById('status').textContent = '⚠️ Nepodarilo sa načítať dáta (sieť) – zobrazujem posledné načítané, skúsim znova.';
+      return DATA.length > 0;
+    }
+    PW = ''; showLock(e === 'locked' ? '' : 'Nesprávne heslo'); return false;
+  }
   try{
     DATA = l; STATUS = s;
     const stEl = document.getElementById('status');
     if (s){
       const src = Object.entries(s.sources).map(([n, v]) => `${n} <b class="${v.ok ? 'ok' : 'err'}">${v.ok ? '✓' : '✗'}</b>`).join(' · ');
       stEl.innerHTML = `Posledná kontrola ${ago(s.checked_at)} · ďalšia ${nextRun()} · ${src}`;
+      document.getElementById('srcinfo').textContent = `Ponuky z: ${Object.keys(s.sources).join(', ')}.`;
     } else stEl.textContent = 'Zatiaľ bez kontroly';
     render();
   }catch(e){ document.getElementById('status').textContent = 'Nepodarilo sa načítať dáta.'; }
