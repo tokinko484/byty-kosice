@@ -36,9 +36,11 @@ MAX_PRICE = int(os.getenv("MAX_PRICE", "700"))   # €/mesiac – horná hranica
 GOOD_PRICE = int(os.getenv("GOOD_PRICE", "650"))  # celková suma pod touto hranicou = „dobrá cena“ 🔥
 ENERGY_ASSUMED = int(os.getenv("ENERGY_ASSUMED", "100"))  # energie, ak ich inzerát neuvádza (minimum)
 MIN_PRICE = 200                                    # nižšie ceny sú zvyčajne nezmysel/izby
-SOURCE_MAX = MAX_PRICE                             # cenový strop pri sťahovaní zo zdrojov (nájom)
+ROOM_MAX = {"2": 730, "3": 730}                    # vyšší limit (VRÁTANE energií) pre 2 a 3-izbové; ostatné MAX_PRICE
+TOP_PRICE = max([MAX_PRICE, *ROOM_MAX.values()])   # najvyšší limit zo všetkých
+SOURCE_MAX = TOP_PRICE                             # cenový strop pri sťahovaní zo zdrojov (nájom)
 ROOMS_OK = ("1,5", "2", "3")                       # sledované byty ("?" = počet izieb neuvedený)
-FILTER_VERSION = 3                                 # zmena filtrov → jednorazovo bez záplavy upozornení
+FILTER_VERSION = 4                                 # zmena filtrov → jednorazovo bez záplavy upozornení
 KEEP_GONE_DAYS = 14                                # ako dlho držať zmiznuté inzeráty
 FAIL_ALERT_AFTER = 8                               # po koľkých zlyhaniach zdroja poslať varovanie
 
@@ -556,6 +558,18 @@ INCREMENTAL = {"Facebook"}  # vracia len nové príspevky – neoznačovať osta
 
 
 # ---------------------------------------------------------------- filter
+def price_limit(rooms):
+    """Horná hranica celkovej sumy (nájom + energie) pre daný počet izieb."""
+    return ROOM_MAX.get(rooms, MAX_PRICE)
+
+
+def limits_text():
+    """Napr. „do 730 € (1,5-izb. do 700 €)“ – pre správy."""
+    if not ROOM_MAX:
+        return f"do {MAX_PRICE} €"
+    return f"do {TOP_PRICE} € (1,5-izb. do {MAX_PRICE} €)" if TOP_PRICE > MAX_PRICE else f"do {MAX_PRICE} €"
+
+
 def keep(x: dict) -> bool:
     price = x.get("price")
     fb_src = x["source"] == "Facebook"
@@ -575,7 +589,7 @@ def keep(x: dict) -> bool:
     else:
         energy = parse_energy(full_e, price)
     total = None if price is None else price + (energy if energy is not None else ENERGY_ASSUMED)
-    if total is not None and total > MAX_PRICE:  # rozpočet je vrátane energií
+    if total is not None and total > TOP_PRICE:  # rozpočet je vrátane energií
         return False
     x.update(all_in=all_in, energy=energy, total=total)
     rooms = x.get("rooms")
@@ -586,6 +600,8 @@ def keep(x: dict) -> bool:
             return False
         x["rooms"] = "?"
     elif rooms not in ROOMS_OK and rooms != "?":
+        return False
+    if total is not None and total > price_limit(x["rooms"]):  # limit podľa izieb (2 a 3 izby vyšší)
         return False
     if RE_SEEK.search(t):
         return False
@@ -948,7 +964,7 @@ def main():
     prev_initialized = set(state["initialized"])
     state["initialized"] = sorted(prev_initialized | ok_sources)
     old_max = state.get("max_price", 680)
-    state["max_price"] = MAX_PRICE
+    state["max_price"] = TOP_PRICE
     filters_changed = state.get("filter_v") != FILTER_VERSION
     state["filter_v"] = FILTER_VERSION
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1), "utf-8")
@@ -959,14 +975,14 @@ def main():
 
     if first_run:
         log(f"Prvý beh – uložených {status['active']} ponúk, upozornenia neposielam")
-        tg_broadcast(f"🏠 Sledovanie bytov spustené. Aktuálne {status['active']} ponúk do {MAX_PRICE} €."
+        tg_broadcast(f"🏠 Sledovanie bytov spustené. Aktuálne {status['active']} ponúk {limits_text()}."
                      + (f"\n{SITE_URL}" if SITE_URL else "") + "\nNové ponuky ti budem posielať sem.")
     else:
         # nový zdroj / zmena filtrov / vyšší limit by poslali naraz veľa starších ponúk →
         # neodmlčať ich, ale poslať v jednej súhrnnej správe s odkazmi
         fresh_sources = ok_sources - prev_initialized
         bulk = [x for x in new_items if x["source"] in fresh_sources]
-        if MAX_PRICE > old_max:
+        if TOP_PRICE > old_max:
             bulk += [x for x in new_items if (x.get("total") or x.get("price") or 0) > old_max and x not in bulk]
         if filters_changed:
             bulk = list(new_items)
