@@ -549,6 +549,7 @@ SOURCES = {
     "Bezrealitky": scrape_bezrealitky,
     # "Bazar.sk": scrape_bazar,  # vypnuté 2026-11-21: Bazar.sk blokuje GitHub Actions (RemoteDisconnected)
 }
+facebook.detect_rooms, facebook.strip_accents = detect_rooms, strip_accents
 if facebook.enabled():
     SOURCES["Facebook"] = facebook.fetch   # volá sa so stavom: fetch(state, log)
 INCREMENTAL = {"Facebook"}  # vracia len nové príspevky – neoznačovať ostatné ako zmiznuté
@@ -557,8 +558,9 @@ INCREMENTAL = {"Facebook"}  # vracia len nové príspevky – neoznačovať osta
 # ---------------------------------------------------------------- filter
 def keep(x: dict) -> bool:
     price = x.get("price")
-    fb = x["source"] == "Facebook"  # príspevok už posúdil Gemini (ponuka celého bytu, nie izba/dopyt)
-    if (price is None and not fb) or (price is not None and price < MIN_PRICE):
+    fb_src = x["source"] == "Facebook"
+    fb = fb_src and x.get("ai", True)  # príspevok už posúdila AI (ponuka celého bytu, nie izba/dopyt)
+    if (price is None and not fb_src) or (price is not None and price < MIN_PRICE):
         return False
     t = strip_accents(x["title"].lower())
     full = strip_accents((x["title"] + " " + (x.get("desc") or "")).lower())

@@ -18,6 +18,8 @@ import requests
 
 BD_TOKEN = os.getenv("BRIGHTDATA_TOKEN", "").strip()
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GROQ_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_MODELS = ("openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b")
 BD_DATASET = os.getenv("FB_DATASET_ID", "gd_lz11l67o2cb3r0lkj3")  # Facebook – Posts by group URL
 # verejné skupiny → počiatočný počet najnovších príspevkov na jeden snapshot (ďalej sa ladí automaticky)
 DEFAULT_GROUPS = {
@@ -41,7 +43,12 @@ NOW = datetime.now(timezone.utc)
 
 
 def enabled() -> bool:
-    return bool(BD_TOKEN and GEMINI_KEY and FB_GROUPS)
+    return bool(BD_TOKEN and FB_GROUPS)  # AI nie je podmienkou – bez nej sa použijú pravidlá
+
+
+# doplní scrape.py (rovnaké pravidlá ako pri portáloch)
+detect_rooms = None
+strip_accents = None
 
 
 # ---------------------------------------------------------------- Bright Data
@@ -158,7 +165,7 @@ def gemini_extract(posts: list[dict]) -> dict[str, dict]:
         "contents": [{"role": "user", "parts": [{"text": PROMPT + json.dumps(payload, ensure_ascii=False)}]}],
         "generationConfig": {"temperature": 0, "responseMimeType": "application/json", "responseSchema": SCHEMA},
     }
-    deadline = time.time() + int(os.getenv("GEMINI_MAX_S", "240"))
+    deadline = time.time() + int(os.getenv("GEMINI_MAX_S", "150"))
     models, tried, errors = list(GEMINI_MODELS), set(), []
     while models and time.time() < deadline:
         model = models.pop(0)
@@ -182,6 +189,90 @@ def gemini_extract(posts: list[dict]) -> dict[str, dict]:
         if not models and not tried - set(GEMINI_MODELS):
             models = _more_models(list(tried))
     raise RuntimeError(f"Gemini zlyhal ({', '.join(dict.fromkeys(errors[-4:])) or 'časový limit'})")
+
+
+GROQ_FIELDS = """Vráť JSON objekt {"items": [...]} – pre každý príspevok jeden objekt s poľami:
+id (string, rovnaké ako na vstupe), is_offer (bool), in_kosice (bool), rooms ("1","1,5","2","2,5","3","4+","?"),
+rent_eur (int alebo null), energy_eur (int alebo null), all_inclusive (bool), area_m2 (číslo alebo null),
+location (string), available_from (string), contact (string), advertiser ("súkromník","RK","?"), title (string), warning (string)."""
+
+
+def groq_extract(posts: list[dict], deadline: float) -> dict[str, dict]:
+    payload = [{"id": p["id"], "text": p["text"][:1800]} for p in posts]
+    msgs = [{"role": "system", "content": "Odpovedaj výlučne platným JSON."},
+            {"role": "user", "content": PROMPT.replace("Príspevky (JSON):", GROQ_FIELDS + "\n\nPríspevky (JSON):")
+             + json.dumps(payload, ensure_ascii=False)}]
+    errors = []
+    for model in GROQ_MODELS:
+        for attempt in range(2):
+            if time.time() > deadline:
+                raise RuntimeError(f"Groq časový limit ({', '.join(errors[-2:])})")
+            try:
+                r = requests.post("https://api.groq.com/openai/v1/chat/completions", timeout=60,
+                                  headers={"Authorization": f"Bearer {GROQ_KEY}"},
+                                  json={"model": model, "messages": msgs, "temperature": 0,
+                                        "response_format": {"type": "json_object"}})
+                if r.status_code == 200:
+                    data = json.loads(r.json()["choices"][0]["message"]["content"])
+                    items = data.get("items") if isinstance(data, dict) else data
+                    return {str(i.get("id")): i for i in items or [] if isinstance(i, dict)}
+                errors.append(f"{model} HTTP {r.status_code}")
+                if r.status_code not in (429, 500, 502, 503, 504):
+                    break
+                time.sleep(min(float(r.headers.get("retry-after") or 5), 20))
+            except (requests.RequestException, ValueError, KeyError, IndexError, TypeError) as e:
+                errors.append(f"{model} {type(e).__name__}")
+                time.sleep(3)
+    raise RuntimeError(f"Groq zlyhal ({', '.join(dict.fromkeys(errors[-3:]))})")
+
+
+RE_SEEKING = re.compile(r"\b(hladam|hladame|hlada sa|kupim|looking for|searching for|we are looking|i am looking|"
+                        r"predam|predame|na predaj|for sale)\b")
+RE_MONEY = re.compile(r"(?:€\s*(\d{1,2}[ .,]?\d{3}|\d{3,4})|(\d{1,2}[ .]\d{3}|\d{3,4})(?:,-|,00|\.00)?\s*(?:€|eur\b|euro|eur/))")
+RE_NOT_RENT = re.compile(r"kauci|depozit|zaloh|energi|poplat|proviz|\brk\b|sluzb|utilit|deposit|fee")
+RE_PHONE = re.compile(r"(?:\+421|00421|\b0)\s?9\d{2}[\s/]?\d{3}[\s/]?\d{3}")
+
+
+def rule_extract(posts: list[dict]) -> dict[str, dict]:
+    """Bez AI: rovnaké pravidlá ako pri portáloch. Radšej ohlásiť navyše ako nechať ujsť."""
+    out = {}
+    for p in posts:
+        raw = p["text"]
+        t = strip_accents(raw.lower()) if strip_accents else raw.lower()
+        price = None
+        for m in RE_MONEY.finditer(t):
+            v = int(re.sub(r"\D", "", m.group(1) or m.group(2)))
+            if 200 <= v <= 3000 and not RE_NOT_RENT.search(t[max(0, m.start() - 25):m.start()]):
+                price = v
+                break
+        rooms = detect_rooms(raw) if detect_rooms else None
+        rooms = {"4": "4+", None: "?"}.get(rooms, rooms)
+        first = re.sub(r"\s+", " ", raw).strip()[:70]
+        label = {"1,5": "1,5-izbový byt", "2": "2-izbový byt", "3": "3-izbový byt"}.get(rooms)
+        phone = RE_PHONE.search(raw)
+        out[p["id"]] = {"id": p["id"], "is_offer": not RE_SEEKING.search(t[:250]), "in_kosice": True,
+                        "rooms": rooms, "rent_eur": price, "energy_eur": None, "all_inclusive": False,
+                        "location": "", "available_from": "", "contact": phone.group(0) if phone else "",
+                        "advertiser": "?", "title": f"{label} – {first}" if label else first,
+                        "warning": "rozpoznané bez AI – skontroluj údaje", "_ai": False}
+    return out
+
+
+def extract(posts: list[dict], log) -> dict[str, dict]:
+    """Groq → Gemini → pravidlá. Nikdy nezlyhá – príspevky sa vždy vyhodnotia a ohlásia."""
+    errors = []
+    if GROQ_KEY:
+        try:
+            return groq_extract(posts, time.time() + 120)
+        except RuntimeError as e:
+            errors.append(str(e))
+    if GEMINI_KEY:
+        try:
+            return gemini_extract(posts)
+        except RuntimeError as e:
+            errors.append(str(e))
+    log(f"Facebook: AI nedostupná ({'; '.join(errors) or 'chýba kľúč'}) – vyhodnocujem pravidlami")
+    return rule_extract(posts)
 
 
 # ---------------------------------------------------------------- spracovanie
@@ -229,6 +320,8 @@ def to_listing(rec: dict, ex: dict) -> dict | None:
         "advertiser": ex.get("advertiser") if ex.get("advertiser") in ("súkromník", "RK") else None,
         "warning": (ex.get("warning") or "").strip() or None,
         "group": rec.get("group_name"),
+        "ai": ex.get("_ai", True),
+        "energy_text": text,
         "text_for_filter": f"{title} {loc} kosice",
     }
 
@@ -289,7 +382,7 @@ def process(records: list[dict], fb: dict, log) -> list[dict]:
     out = []
     for i in range(0, len(posts), 20):  # max 20 príspevkov na jedno volanie Gemini
         chunk = posts[i:i + 20]
-        ex = gemini_extract(chunk)
+        ex = extract(chunk, log)
         for p in chunk:
             x = to_listing(p["rec"], ex.get(p["id"]) or {})
             if x:
