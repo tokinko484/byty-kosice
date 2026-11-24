@@ -719,28 +719,81 @@ def fmt_listing(x: dict) -> str:
         lines.append("⚠️ " + html.escape(x["warning"][:120]))
     src = x["source"] + (f" · {x['advertiser']}" if x.get("advertiser") else "")
     lines.append(f"🔎 {html.escape(src)}")
-    lines.append(f'<a href="{html.escape(x["url"])}">Otvoriť inzerát</a>')
+    lines.append(f'<a href="{html.escape(x.get("url") or SITE_URL or "")}">Otvoriť inzerát</a>')
     return "\n".join(lines)
 
 
-def notify_new(items: list[dict]):
-    if not TG_TOKEN or not TG_CHATS:
-        log(f"Telegram nie je nastavený – {len(items)} nových bez upozornenia")
-        return
-    for x in items[:25]:
-        caption = fmt_listing(x)
-        for cid in TG_CHATS:
-            ok = False
-            if x.get("image"):
-                j = tg("sendPhoto", chat_id=cid, photo=x["image"], caption=caption, parse_mode="HTML")
-                ok = bool(j and j.get("ok"))
-            if not ok:
-                tg("sendMessage", chat_id=cid, text=caption, parse_mode="HTML", disable_web_page_preview="true")
-        time.sleep(1)
+def _send(cid: str, x: dict | None = None, text: str | None = None) -> bool:
+    """Pošle ponuku (s fotkou, ak je) alebo text. Pri chybe/limite Telegramu skúša znova."""
+    if x is not None:
+        text = fmt_listing(x)
+        if x.get("image"):
+            j = tg("sendPhoto", chat_id=cid, photo=x["image"], caption=text, parse_mode="HTML")
+            if j and j.get("ok"):
+                return True
+    for attempt in range(3):
+        j = tg("sendMessage", chat_id=cid, text=text, parse_mode="HTML", disable_web_page_preview="true")
+        if j and j.get("ok"):
+            return True
+        wait = ((j or {}).get("parameters") or {}).get("retry_after") or 3 * (attempt + 1)
+        time.sleep(min(int(wait), 30))
+    return False
+
+
+def fmt_line(x: dict) -> str:
+    """Jeden riadok do súhrnnej správy."""
+    if not x.get("price"):
+        price = "cena ?"
+    elif x.get("all_in") or x.get("energy") is not None:
+        price = f"{x.get('total') or x['price']} € s energiami"
+    else:
+        price = f"{x['price']} € + energie ?"
+    rooms = "izby ?" if x.get("rooms") in (None, "?") else f"{x['rooms']} izb."
+    url = html.escape(x.get("url") or SITE_URL or "")
+    return (f"• <b>{price}</b> · {rooms} · {html.escape((x.get('location') or '')[:30])} – "
+            f'<a href="{url}">{html.escape(x["title"][:60])}</a> ({html.escape(x["source"])})')
+
+
+def notify_new(items: list[dict], digest: list[dict] = (), header: str = "📋 Ďalšie nové ponuky",
+               chats: list[str] | None = None) -> dict[str, list[str]]:
+    """Ohlási KAŽDÚ ponuku: prvých 25 samostatne (s fotkou), ostatné v súhrnných správach s odkazmi.
+    Vráti {chat_id: [id, …]} ponúk, ktoré sa nepodarilo doručiť (pošlú sa pri ďalšom behu)."""
+    chats = list(chats or TG_CHATS)
+    failed: dict[str, list[str]] = {}
+    items, digest = list(items), list(digest)
+    if not TG_TOKEN or not chats:
+        log(f"Telegram nie je nastavený – {len(items) + len(digest)} ponúk bez upozornenia")
+        return failed
     if len(items) > 25:
-        more = f"…a ďalších {len(items) - 25} nových ponúk." + (f"\n{SITE_URL}" if SITE_URL else "")
-        for cid in TG_CHATS:
-            tg("sendMessage", chat_id=cid, text=more)
+        digest = items[25:] + digest
+        items = items[:25]
+    for x in items:
+        for cid in chats:
+            try:
+                ok = _send(cid, x=x)
+            except Exception as e:  # noqa: BLE001
+                log("Upozornenie zlyhalo:", type(e).__name__)
+                ok = False
+            if not ok:
+                failed.setdefault(cid, []).append(x["id"])
+        time.sleep(1)
+    if digest:
+        chunks, text, ids = [], f"{header} ({len(digest)}):", []
+        for x in digest:
+            line = fmt_line(x)
+            if len(text) + len(line) > 3800:
+                chunks.append((text, ids))
+                text, ids = "", []
+            text += "\n" + line
+            ids.append(x["id"])
+        chunks.append((text, ids))
+        for cid in chats:
+            for text, ids in chunks:
+                if not _send(cid, text=text.strip()):
+                    failed.setdefault(cid, []).extend(ids)
+    for cid, ids in failed.items():
+        log(f"Telegram: {len(ids)} ponúk sa nepodarilo doručiť – pošlem pri ďalšom behu")
+    return failed
 
 
 def tg_broadcast(text: str):
@@ -801,11 +854,13 @@ def main():
 
     status = {"checked_at": NOW.isoformat(timespec="seconds"), "sources": {}}
     scraped: dict[str, dict] = {}
+    raw_ids: set[str] = set()
     ok_sources = set()
     for name, fn in SOURCES.items():
         t0 = time.time()
         try:
             raw = fn(state, log) if name in INCREMENTAL else fn()
+            raw_ids.update(x["id"] for x in raw)
             kept = [x for x in raw if keep(x)]
             for x in kept:
                 scraped[x["id"]] = x
@@ -826,6 +881,7 @@ def main():
 
     merged = dict(old)
     new_items = []
+    digest_items = []  # ohlásiť súhrnne (napr. prvá dávka nového zdroja)
     for lid, x in scraped.items():
         x.pop("text_for_filter", None)
         x.pop("energy_text", None)
@@ -843,6 +899,7 @@ def main():
                     new_items.append({**e, "title": f"📉 Zlacnené z {old_price} €: " + e["title"]})
             e["active"] = True
             e.pop("gone_since", None)
+            e.pop("gone_reason", None)
         else:
             silent = x.pop("silent", False)
             x["first_seen"] = NOW.isoformat(timespec="seconds")
@@ -861,8 +918,8 @@ def main():
                 if all(a["url"] != x["url"] for a in alts):
                     alts.append({"source": x["source"], "url": x["url"]})
             merged[lid] = x
-            if not dup and not repost and not silent:
-                new_items.append(x)
+            if not dup and not repost:
+                (digest_items if silent else new_items).append(x)
             elif repost:
                 log("Znovu pridaný inzerát – neposielam")
 
@@ -880,6 +937,8 @@ def main():
         if e.get("active", True):
             e["active"] = False
             e["gone_since"] = NOW.isoformat(timespec="seconds")
+            # inzerát je na portáli, ale nevyhovuje filtru (cena s energiami, izby…) vs. naozaj zmizol
+            e["gone_reason"] = "filter" if lid in raw_ids else "removed"
         elif e.get("gone_since") and datetime.fromisoformat(e["gone_since"]) < NOW - timedelta(days=KEEP_GONE_DAYS):
             del merged[lid]
 
@@ -901,25 +960,43 @@ def main():
         tg_broadcast(f"🏠 Sledovanie bytov spustené. Aktuálne {status['active']} ponúk do {MAX_PRICE} €."
                      + (f"\n{SITE_URL}" if SITE_URL else "") + "\nNové ponuky ti budem posielať sem.")
     else:
-        # zdroj, ktorý práve funguje prvýkrát, by inak poslal všetky svoje inzeráty naraz
+        # nový zdroj / zmena filtrov / vyšší limit by poslali naraz veľa starších ponúk →
+        # neodmlčať ich, ale poslať v jednej súhrnnej správe s odkazmi
         fresh_sources = ok_sources - prev_initialized
-        if fresh_sources:
-            log("Prvý úspešný beh zdrojov (bez upozornení):", ", ".join(sorted(fresh_sources)))
-        new_items = [x for x in new_items if x["source"] not in fresh_sources]
-        # po zvýšení cenového limitu neposielať naraz všetky staršie drahšie ponuky
+        bulk = [x for x in new_items if x["source"] in fresh_sources]
         if MAX_PRICE > old_max:
-            skipped = [x for x in new_items if (x.get("price") or 0) > old_max]
-            if skipped:
-                log(f"Nový limit {MAX_PRICE} €: {len(skipped)} existujúcich ponúk nad {old_max} € bez upozornenia")
-            new_items = [x for x in new_items if (x.get("price") or 0) <= old_max]
-        new_items.sort(key=lambda x: x.get("price") or 9999)
-        log(f"Nové/zlacnené: {len(new_items)}")
-        if filters_changed and new_items:
-            # rozšírené filtre by naraz poslali všetky staršie ponuky, ktoré doteraz neprešli
-            tg_broadcast(f"🔧 Filtre zmenené (limit {MAX_PRICE} € vrátane energií) – "
-                         f"pribudlo {len(new_items)} ponúk, nájdeš ich na webe." + (f"\n{SITE_URL}" if SITE_URL else ""))
-            new_items = []
-        notify_new(new_items)
+            bulk += [x for x in new_items if (x.get("total") or x.get("price") or 0) > old_max and x not in bulk]
+        if filters_changed:
+            bulk = list(new_items)
+        new_items = [x for x in new_items if x not in bulk]
+        digest_items += bulk
+        new_items.sort(key=lambda x: x.get("total") or x.get("price") or 9999)
+        digest_items.sort(key=lambda x: x.get("total") or x.get("price") or 9999)
+        log(f"Nové/zlacnené: {len(new_items)} samostatne, {len(digest_items)} v súhrne")
+        failed = notify_new(new_items, digest_items)
+
+        # jednorazovo: ponuky z 24. 11., ktoré pri zmene filtrov neboli oznámené
+        if not state.get("backfill_20261124"):
+            missed = [x for x in listings if x.get("active") and not x.get("dup_of")
+                      and "2026-11-24T11:40" <= x["first_seen"] <= "2026-11-24T12:25"
+                      and all(x["id"] != y["id"] for y in new_items + digest_items)]
+            missed.sort(key=lambda x: x.get("total") or x.get("price") or 9999)
+            if missed:
+                f2 = notify_new([], missed, header="📋 Ponuky z dnešnej zmeny filtrov, ktoré som zatiaľ neoznámil")
+                for cid, ids in f2.items():
+                    failed.setdefault(cid, []).extend(ids)
+            state["backfill_20261124"] = True
+
+        # nedoručené z minulých behov
+        for cid, ids in (state.get("tg_pending") or {}).items():
+            again = [merged[i] for i in dict.fromkeys(ids) if i in merged and merged[i].get("active")]
+            if again and cid in TG_CHATS:
+                f3 = notify_new([], again, header="📋 Ponuky, ktoré sa minule nepodarilo doručiť", chats=[cid])
+                for c, i3 in f3.items():
+                    failed.setdefault(c, []).extend(i3)
+        state["tg_pending"] = {c: sorted(set(i))[:200] for c, i in failed.items()}
+        STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1), "utf-8")
+        new_items = new_items + digest_items
 
     # /sync z Telegramu – potvrdenie žiadateľovi
     sync_chat = os.getenv("SYNC_CHAT", "").strip()
