@@ -21,9 +21,9 @@
   "usage": {
    "2026-11": 15
   },
-  "snapshot_at": "2026-11-24T12:00:59+00:00",
-  "last_trigger": "2026-11-24T12:00:59+00:00",
-  "interval_min": 144,
+  "snapshot_at": "2026-11-24T14:55:20+00:00",
+  "last_trigger": "2026-11-24T14:55:20+00:00",
+  "interval_min": 173,
   "last_count": 15,
   "seen": [
    "2754261978342946",
@@ -42,7 +42,14 @@
    "2756505174785293",
    "2757218371380640"
   ],
-  "primed": true
+  "primed": true,
+  "n": {
+   "https://www.facebook.com/groups/rentflatkosice/": 4,
+   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 3,
+   "https://www.facebook.com/groups/575297962860739/": 4,
+   "https://www.facebook.com/groups/449027048994430/": 7
+  },
+  "snapshot": "sd_mwuthc0q1lhkttqj5h"
  },
  "backfill_20261124": true,
  "tg_pending": {}
