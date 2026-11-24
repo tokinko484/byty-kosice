@@ -95,7 +95,7 @@ function setF(k, v){ st[k] = v; store.set('filters', st); render(); }
 
 function renderFilters(){
   const r = document.getElementById('f-rooms'); r.innerHTML = '';
-  [['all','1,5 aj 2 izby'],['1,5','1,5 izb.'],['2','2 izb.']].forEach(([v,l]) => r.append(chip(l, st.rooms===v, () => setF('rooms', v))));
+  [['all','Všetky'],['1,5','1,5 izb.'],['2','2 izb.'],['3','3 izb.'],['?','Izby neuvedené']].forEach(([v,l]) => r.append(chip(l, st.rooms===v, () => setF('rooms', v))));
   [600,650,680,700].forEach(p => r.append(chip(`do ${p} €`, st.max===p, () => setF('max', p))));
   const m = document.getElementById('f-more'); m.innerHTML = '';
   m.append(chip(st.sort==='new' ? '↓ Najnovšie' : '↑ Najlacnejšie', false, () => setF('sort', st.sort==='new' ? 'price' : 'new')));
@@ -113,7 +113,7 @@ function render(){
   let items = DATA.filter(x => !x.dup_of)
     .filter(x => st.gone || x.active !== false)
     .filter(x => st.rooms==='all' || x.rooms===st.rooms)
-    .filter(x => (x.price ?? 0) <= st.max)
+    .filter(x => (x.price ?? 0) <= st.max || (x.all_in && (x.price ?? 0) <= st.max + 150))
     .filter(x => st.src==='all' || x.source===st.src || (x.also||[]).some(a => a.source===st.src))
     .filter(x => !st.fav || favs.has(x.id))
     .filter(x => !st.hideSeen || !seen.has(x.id));
@@ -126,14 +126,15 @@ function render(){
     const badges = [x.active===false ? '<span class="b">zmizol</span>' : '',
       isNew ? '<span class="b new">NOVÉ</span>' : '',
       x.price <= 650 ? '<span class="b good">do 650 €</span>' : '',
+      x.all_in ? '<span class="b">vrátane energií</span>' : '',
       x.price_drop_from ? `<span class="b drop">zlacnel z ${x.price_drop_from} €</span>` : '',
       `<span class="b">${esc(x.source)}</span>`].join('');
-    const meta = [`${esc(x.rooms)} izb.`, x.area ? `${x.area} m²` : '', esc(x.location)].filter(Boolean).join(' · ');
+    const meta = [x.rooms==='?' ? 'izby neuvedené' : `${esc(x.rooms)} izb.`, x.area ? `${x.area} m²` : '', esc(x.location)].filter(Boolean).join(' · ');
     const also = (x.also||[]).length ? `<div class="also">Aj na: ${x.also.map(a => `<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.source)}</a>`).join(', ')}</div>` : '';
     return `<article class="card${seen.has(x.id) ? ' seen' : ''}${x.active===false ? ' gone' : ''}">
       <a class="img" href="${esc(x.url)}" target="_blank" rel="noopener" data-id="${esc(x.id)}" style="${x.image ? `background-image:url('${esc(x.image)}')` : ''}"><div class="badges">${badges}</div></a>
       <div class="body">
-        <div class="price">${x.price} €<span>/ mes.</span></div>
+        <div class="price">${x.price} €<span>/ mes.${x.all_in ? ' vrátane energií' : ''}</span></div>
         <div class="title">${esc(x.title)}</div>
         <div class="meta">${meta}</div>
         <div class="meta">Pridané ${ago(x.first_seen)}</div>
