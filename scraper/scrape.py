@@ -557,20 +557,23 @@ INCREMENTAL = {"Facebook"}  # vracia len nové príspevky – neoznačovať osta
 # ---------------------------------------------------------------- filter
 def keep(x: dict) -> bool:
     price = x.get("price")
-    if price is None or price < MIN_PRICE:
+    fb = x["source"] == "Facebook"  # príspevok už posúdil Gemini (ponuka celého bytu, nie izba/dopyt)
+    if (price is None and not fb) or (price is not None and price < MIN_PRICE):
         return False
     t = strip_accents(x["title"].lower())
     full = strip_accents((x["title"] + " " + (x.get("desc") or "")).lower())
     full_e = strip_accents((x["title"] + " " + (x.get("energy_text") or x.get("desc") or "")).lower())
     all_in = bool(RE_ALLIN.search(full_e))
-    if all_in:
+    if price is None:  # FB bez ceny → „cena neuvedená“, rozhodne sa človek
+        energy = x.get("energy")
+    elif all_in:
         energy = 0
     elif x.get("energy") is not None:
         energy = x["energy"]
     else:
         energy = parse_energy(full_e, price)
-    total = price + (energy if energy is not None else ENERGY_ASSUMED)
-    if total > MAX_PRICE:  # rozpočet je vrátane energií
+    total = None if price is None else price + (energy if energy is not None else ENERGY_ASSUMED)
+    if total is not None and total > MAX_PRICE:  # rozpočet je vrátane energií
         return False
     x.update(all_in=all_in, energy=energy, total=total)
     rooms = x.get("rooms")
@@ -586,10 +589,10 @@ def keep(x: dict) -> bool:
         return False
     if RE_ROOM_ONLY.search(t) and not has_rooms(t):
         return False
-    if per_person_price(full):
+    if not fb and per_person_price(full):
         return False
-    # miesto v izbe / spolubývanie aj keď je v názve „2-izbový byt“
-    if re.search(r"miesto v izbe|miesto v byte|volne miesto|miesta v izbe|spolubyva|"
+    # miesto v izbe / spolubývanie aj keď je v názve „2-izbový byt“ (FB: anglické texty posúdil Gemini)
+    if not fb and re.search(r"miesto v izbe|miesto v byte|volne miesto|miesta v izbe|spolubyva|"
                  r"(prenajom|prenajmem|podnajom|ponukam|volna) (jednej |samostatnej |nepriechodnej |zariadenej |vacsej |mensej )*izb[yu]\b|"
                  r"\bizb[ua] v (\d|rodinnom|dome|zdielan)|nepriechodnej izby|samostatnej izby|"
                  r"room for rent|\broom in (a|an|the)\b|flatmate|roommate|shared (flat|apartment)", full):
