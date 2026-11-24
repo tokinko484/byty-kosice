@@ -19,12 +19,20 @@ import requests
 BD_TOKEN = os.getenv("BRIGHTDATA_TOKEN", "").strip()
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 BD_DATASET = os.getenv("FB_DATASET_ID", "gd_lz11l67o2cb3r0lkj3")  # Facebook – Posts by group URL
-FB_GROUPS = [g.strip() for g in os.getenv(
-    "FB_GROUPS", "https://www.facebook.com/groups/rentflatkosice/").split(",") if g.strip()]
+# verejné skupiny → počiatočný počet najnovších príspevkov na jeden snapshot (ďalej sa ladí automaticky)
+DEFAULT_GROUPS = {
+    "https://www.facebook.com/groups/rentflatkosice/": 4,            # Flat for rent Kosice, Byt na Prenajom
+    "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 3,     # Bývanie a prenájom Košice (~2/deň)
+    "https://www.facebook.com/groups/575297962860739/": 4,            # Nehnuteľnosti predaj-podnájom-prenájom KE (10+/deň)
+    "https://www.facebook.com/groups/449027048994430/": 7,            # Bývanie Košice – byty, domy, pozemky (20+/deň)
+}
+_env = [g.strip() for g in os.getenv("FB_GROUPS", "").split(",") if g.strip()]  # "url|n,url|n"
+GROUPS = {g.split("|")[0]: int(g.split("|")[1]) if "|" in g else 5 for g in _env} or DEFAULT_GROUPS
+FB_GROUPS = list(GROUPS)
+N_MIN, N_MAX = 3, 25
 MONTHLY_BUDGET = int(os.getenv("FB_MONTHLY_BUDGET", "4500"))  # free tier je 5 000 záznamov / mesiac
 MIN_INTERVAL_MIN = int(os.getenv("FB_MIN_INTERVAL_MIN", "60"))
 WAIT_READY_S = int(os.getenv("FB_WAIT_READY_S", "150"))
-NUM_POSTS = int(os.getenv("FB_NUM_POSTS", "15"))  # koľko najnovších príspevkov na skupinu (ak to API prijme)
 ACTIVE_DAYS = 21  # príspevok zo skupiny „zmizne“ z webu po 3 týždňoch
 BD = "https://api.brightdata.com/datasets/v3"
 GEMINI_MODELS = ("gemini-flash-lite-latest", "gemini-flash-latest")
@@ -47,9 +55,10 @@ def _bd(method: str, path: str, **kw) -> requests.Response:
 def bd_trigger(fb: dict, log) -> str:
     path = f"/trigger?dataset_id={BD_DATASET}&include_errors=true"
     r = None
-    if NUM_POSTS and not fb.get("no_num_posts"):
+    if not fb.get("no_num_posts"):
+        n = fb.setdefault("n", {})
         try:
-            r = _bd("POST", path, json=[{"url": g, "num_of_posts": NUM_POSTS} for g in FB_GROUPS])
+            r = _bd("POST", path, json=[{"url": g, "num_of_posts": n.setdefault(g, GROUPS[g])} for g in FB_GROUPS])
         except RuntimeError as e:
             if "HTTP 4" not in str(e):
                 raise
@@ -202,32 +211,77 @@ def to_listing(rec: dict, ex: dict) -> dict | None:
     }
 
 
+def group_key(url: str) -> str:
+    return url.rstrip("/").split("/groups/")[-1].split("/")[0].lower()
+
+
+def rec_group(rec: dict) -> str | None:
+    txt = " ".join(str(v) for v in ((rec.get("input") or {}).get("url"), rec.get("group_url"), rec.get("url"),
+                                    rec.get("group_id"), rec.get("group_name")) if v).lower()
+    for g in FB_GROUPS:
+        if f"/groups/{group_key(g)}/" in txt or f"/groups/{group_key(g)}?" in txt or txt.split() and group_key(g) in txt.split():
+            return g
+    return None
+
+
+def tune(stats: dict, fb: dict, log):
+    """Ak boli všetky stiahnuté príspevky skupiny nové, mohli niektoré uniknúť → stiahnuť viac.
+    Ak je skupina pomalá, počet pomaly znižovať (šetrí free limit)."""
+    n, rate, primed = fb.setdefault("n", {}), fb.setdefault("rate", {}), fb.setdefault("primed_groups", [])
+    for g, (ret, new) in stats.items():
+        if g is None:
+            continue
+        if g not in primed:  # prvá dávka skupiny je vždy „celá nová“
+            primed.append(g)
+            continue
+        cur = n.get(g, GROUPS.get(g, 5))
+        rate[g] = round(0.7 * rate.get(g, new) + 0.3 * new, 2)
+        if ret >= cur and new >= cur:
+            n[g] = min(N_MAX, cur + max(2, cur // 2))
+            log(f"Facebook: {group_key(g)} – všetkých {cur} príspevkov bolo nových, zvyšujem na {n[g]} (niečo mohlo uniknúť)")
+        elif max(N_MIN, math.ceil(rate[g] * 2) + 2) < cur:
+            n[g] = cur - 1
+
+
 def process(records: list[dict], fb: dict, log) -> list[dict]:
     seen = set(fb.get("seen", []))
-    posts = []
+    if fb.get("primed") and not fb.get("primed_groups"):  # prvá skupina už bola spracovaná pred touto verziou
+        fb["primed_groups"] = [FB_GROUPS[0]]
+    primed = set(fb.get("primed_groups", []))
+    posts, stats = [], {}
     for rec in records:
         pid = _post_id(rec)
         text = (rec.get("content") or "").strip()
-        if not pid or pid in seen or rec.get("error") or len(text) < 15:
+        if rec.get("error") or not pid:
             continue
-        posts.append({"id": pid, "text": text, "rec": rec})
+        g = rec_group(rec)
+        st = stats.setdefault(g, [0, 0])
+        st[0] += 1
+        if pid in seen:
+            continue
+        st[1] += 1
+        if len(text) < 15:
+            seen.add(pid)
+            continue
+        posts.append({"id": pid, "text": text, "rec": rec, "group": g})
     out = []
-    first = not fb.get("primed")
     for i in range(0, len(posts), 20):  # max 20 príspevkov na jedno volanie Gemini
         chunk = posts[i:i + 20]
         ex = gemini_extract(chunk)
         for p in chunk:
             x = to_listing(p["rec"], ex.get(p["id"]) or {})
             if x:
+                if p["group"] is not None and p["group"] not in primed:  # história novej skupiny → ohlási sa v súhrne
+                    x["silent"] = True
                 out.append(x)
         seen.update(p["id"] for p in chunk)  # až po úspešnej extrakcii
         fb["seen"] = sorted(seen, key=lambda s: (len(s), s))[-1500:]
+    fb["seen"] = sorted(seen | set(fb.get("seen", [])), key=lambda s: (len(s), s))[-1500:]
     fb["primed"] = True
-    if first:  # prvá dávka = história skupiny → len na web, bez upozornení
-        for x in out:
-            x["silent"] = True
+    tune(stats, fb, log)
+    per_group = ", ".join(f"{group_key(g) if g else '?'} {r}/{n}" for g, (r, n) in stats.items())
     log(f"Facebook: {len(records)} záznamov, {len(posts)} nových príspevkov, {len(out)} ponúk bytov"
-        + (" (prvá dávka bez upozornení)" if first else ""))
+        f" (skupina: stiahnuté/nové – {per_group})")
     return out
 
 
@@ -268,7 +322,9 @@ def fetch(state: dict, log) -> list[dict]:
             return out
 
     # 2) nový snapshot, ak uplynul interval a je rozpočet
-    per_run = max(1, fb.get("last_count") or NUM_POSTS * len(FB_GROUPS) or 15)
+    n = fb.get("n", {})
+    planned = sum(n.get(g, GROUPS[g]) for g in FB_GROUPS)
+    per_run = max(1, planned if not fb.get("no_num_posts") else (fb.get("last_count") or 15 * len(FB_GROUPS)))
     interval = max(MIN_INTERVAL_MIN, math.ceil(30 * 24 * 60 * per_run / MONTHLY_BUDGET))
     last = fb.get("last_trigger")
     due = not last or NOW - datetime.fromisoformat(last) >= timedelta(minutes=interval - 2)
