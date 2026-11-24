@@ -5,7 +5,7 @@
   "TopReality": 0,
   "Bezrealitky": 0,
   "Bazar.sk": 9,
-  "Facebook": 3
+  "Facebook": 0
  },
  "initialized": [
   "Bazar.sk",
@@ -33,6 +33,13 @@
    "2288548515042265",
    "2288614901702293",
    "2288703458360104",
+   "2288737271690056",
+   "2288786278351822",
+   "2288787485018368",
+   "2288835555013561",
+   "2288884305008686",
+   "2288893398341110",
+   "2288899101673873",
    "2751505731932834",
    "2752946901788717",
    "2754261978342946",
@@ -57,14 +64,18 @@
    "3404002149990292",
    "3404140176643156",
    "3404184476638726",
-   "3405114203212420"
+   "3405114203212420",
+   "3405708133153027",
+   "3405711183152722",
+   "3405722133151627",
+   "3405727489817758"
   ],
   "primed": true,
   "n": {
    "https://www.facebook.com/groups/rentflatkosice/": 4,
    "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 3,
-   "https://www.facebook.com/groups/575297962860739/": 4,
-   "https://www.facebook.com/groups/449027048994430/": 7
+   "https://www.facebook.com/groups/575297962860739/": 6,
+   "https://www.facebook.com/groups/449027048994430/": 10
   },
   "primed_groups": [
    "https://www.facebook.com/groups/rentflatkosice/",
@@ -73,15 +84,16 @@
    "https://www.facebook.com/groups/575297962860739/"
   ],
   "usage_fix_1": true,
-  "queue": [
-   "sd_mwv04ch0wd7jjlc03"
-  ],
+  "queue": [],
   "counted": [
    "sd_mwuthc0q1lhkttqj5h",
    "sd_mwv04ch0wd7jjlc03"
   ],
   "rate": {
-   "https://www.facebook.com/groups/rentflatkosice/": 3.0
+   "https://www.facebook.com/groups/rentflatkosice/": 2.1,
+   "https://www.facebook.com/groups/449027048994430/": 7.0,
+   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 0.0,
+   "https://www.facebook.com/groups/575297962860739/": 4.0
   }
  },
  "backfill_20261124": true,
