@@ -21,8 +21,8 @@
   "usage": {
    "2026-11": 51
   },
-  "snapshot_at": "2026-11-24T14:55:20+00:00",
-  "last_trigger": "2026-11-24T14:55:20+00:00",
+  "snapshot_at": "2026-11-24T18:01:02+00:00",
+  "last_trigger": "2026-11-24T18:01:02+00:00",
   "interval_min": 173,
   "last_count": 18,
   "seen": [
@@ -79,7 +79,8 @@
   ],
   "rate": {
    "https://www.facebook.com/groups/rentflatkosice/": 3.0
-  }
+  },
+  "snapshot": "sd_mwv04ch0wd7jjlc03"
  },
  "backfill_20261124": true,
  "tg_pending": {}
