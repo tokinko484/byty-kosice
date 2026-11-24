@@ -188,6 +188,7 @@ def to_listing(rec: dict, ex: dict) -> dict | None:
         "id": "fb:" + _post_id(rec), "source": "Facebook", "title": title,
         "desc": (" ".join(extra) + " " + text)[:300].strip(),
         "price": int(price) if price else None, "rooms": rooms,
+        "energy": None if ex.get("all_inclusive") else ex.get("energy_eur"),
         "area": float(ex["area_m2"]) if ex.get("area_m2") else None,
         "location": (loc + ", Košice") if loc else "Košice",
         "url": rec.get("url"), "image": _image(rec),

@@ -32,13 +32,13 @@ from bs4 import BeautifulSoup
 import facebook  # Facebook skupiny cez Bright Data + Gemini (scraper/facebook.py)
 
 # ---------------------------------------------------------------- nastavenia
-MAX_PRICE = int(os.getenv("MAX_PRICE", "700"))   # €/mesiac – horná hranica
-GOOD_PRICE = int(os.getenv("GOOD_PRICE", "650"))  # pod touto cenou = „dobrá cena“
+MAX_PRICE = int(os.getenv("MAX_PRICE", "700"))   # €/mesiac – horná hranica VRÁTANE energií
+GOOD_PRICE = int(os.getenv("GOOD_PRICE", "650"))  # celková suma pod touto hranicou = „dobrá cena“ 🔥
+ENERGY_ASSUMED = int(os.getenv("ENERGY_ASSUMED", "100"))  # energie, ak ich inzerát neuvádza (minimum)
 MIN_PRICE = 200                                    # nižšie ceny sú zvyčajne nezmysel/izby
-ALLIN_EXTRA = 150                                  # cena „vrátane energií“ môže byť o toľko vyššia
-SOURCE_MAX = MAX_PRICE + ALLIN_EXTRA               # cenový strop pri sťahovaní zo zdrojov
+SOURCE_MAX = MAX_PRICE                             # cenový strop pri sťahovaní zo zdrojov (nájom)
 ROOMS_OK = ("1,5", "2", "3")                       # sledované byty ("?" = počet izieb neuvedený)
-FILTER_VERSION = 2                                 # zmena filtrov → jednorazovo bez záplavy upozornení
+FILTER_VERSION = 3                                 # zmena filtrov → jednorazovo bez záplavy upozornení
 KEEP_GONE_DAYS = 14                                # ako dlho držať zmiznuté inzeráty
 FAIL_ALERT_AFTER = 8                               # po koľkých zlyhaniach zdroja poslať varovanie
 
@@ -131,7 +131,7 @@ def save_ai_data(listings: list[dict], status: dict):
     import hashlib
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     keep_keys = ("source", "title", "price", "rooms", "area", "location", "url", "first_seen", "active",
-                 "gone_since", "price_drop_from", "also", "desc", "all_in", "available", "contact", "advertiser", "warning")
+                 "gone_since", "price_drop_from", "also", "desc", "all_in", "energy", "total", "available", "contact", "advertiser", "warning")
     items = [{k: (x.get(k)[:200] if k == "desc" and x.get(k) else x.get(k)) for k in keep_keys if x.get(k) not in (None, "", [])}
              for x in listings if not x.get("dup_of")]
     payload = json.dumps({"status": status, "listings": items}, ensure_ascii=False).encode()
@@ -224,6 +224,27 @@ RE_ALLIN = re.compile(
     r"vratane (vsetkych )?(energii|poplatkov|nakladov|sluzieb)|s energiami|vratane energ|energie (su )?v cene|"
     r"v cene (su )?(aj )?energie|cena (je )?(vratane|so|s) energ|all[- ]?inclusive|including (all )?(utilities|bills|energ)|"
     r"(utilities|bills|energies) (are )?included")
+RE_EN_AFTER = re.compile(
+    r"(?:energi\w*|zaloh\w*|poplatk\w*|sluzb\w*|utilit\w*|bills)\D{0,30}?(\d{2,3})(?:[,.]\d+)?"
+    r"(?:\s*[-–]\s*(\d{2,3}))?\s*(?:€|eur|,-)")
+RE_EN_BEFORE = re.compile(
+    r"(\d{2,3})(?:[,.]\d+)?\s*(?:€|eur|,-)?\s*(?:\+\s*)?(?:mesacne\s*)?(?:za\s*|na\s*)?(?:energi|zaloh|poplat|sluzb|utilit)")
+RE_NOT_ENERGY = re.compile(r"\brk\b|realit|proviz|kauci|depozit|jednoraz|maklér|makler")
+
+
+def parse_energy(t: str, price: int | None) -> int | None:
+    """Mesačné energie/zálohy z textu (bez diakritiky, malé písmená). Pri rozpätí berie hornú hranicu."""
+    for rx in (RE_EN_AFTER, RE_EN_BEFORE):
+        for m in rx.finditer(t):
+            ctx = m.group(0) if rx is RE_EN_AFTER else t[max(0, m.start() - 12):m.end()]
+            if RE_NOT_ENERGY.search(ctx):  # poplatok RK, kaucia, provízia nie sú energie
+                continue
+            v = int(m.group(2) if rx is RE_EN_AFTER and m.group(2) else m.group(1))
+            if 30 <= v <= 400 and v != price:
+                return v
+    return None
+
+
 RE_PER_PERSON = re.compile(r"(za|na) osobu|/ ?osob[au]\b|za lozko|per person")
 RE_COSTS_NEAR = re.compile(r"energi|zaloh|poplat|sluzb|voda|internet|vratane|utilit|bills")
 
@@ -307,7 +328,7 @@ def scrape_bazos() -> list[dict]:
                 "id": lid, "source": "Bazoš", "title": title, "desc": desc[:300],
                 "price": price, "rooms": detect_rooms(title, desc), "area": parse_area(title + " " + desc),
                 "location": re.sub(r"\s+", " ", loc), "url": href, "image": img, "posted": posted,
-                "text_for_filter": title + " " + desc,
+                "text_for_filter": title + " " + desc, "energy_text": desc,
             })
         if new_on_page == 0:
             break
@@ -363,7 +384,7 @@ def _nehnutelnosti_page(url: str) -> list[dict]:
             "area": float(area) if area else parse_area(title),
             "location": loc, "url": url_d, "image": imgs[0] if imgs else None,
             "posted": (it.get("validFrom") or "")[:10] or None,
-            "text_for_filter": title + " " + desc[:300],
+            "text_for_filter": title + " " + desc[:300], "energy_text": desc,
         })
     return out
 
@@ -471,6 +492,7 @@ def scrape_bezrealitky() -> list[dict]:
             "id": "bezr:" + str(a["id"]), "source": "Bezrealitky", "title": title,
             "desc": f"Poplatky: {a.get('charges')} €" if a.get("charges") else "",
             "price": int(price) if price else None, "rooms": rooms, "area": float(surface) if surface else None,
+            "energy": int(a["charges"]) if a.get("charges") else None,
             "location": address, "url": f"https://www.bezrealitky.sk/nehnutelnosti-byty-domy/{a.get('uri')}",
             "image": ((a.get("mainImage") or {}).get("url")), "posted": None,
             "text_for_filter": title + " " + address,
@@ -539,11 +561,18 @@ def keep(x: dict) -> bool:
         return False
     t = strip_accents(x["title"].lower())
     full = strip_accents((x["title"] + " " + (x.get("desc") or "")).lower())
-    all_in = bool(RE_ALLIN.search(full))
-    if price > MAX_PRICE and not (all_in and price <= SOURCE_MAX):
-        return False
+    full_e = strip_accents((x["title"] + " " + (x.get("energy_text") or x.get("desc") or "")).lower())
+    all_in = bool(RE_ALLIN.search(full_e))
     if all_in:
-        x["all_in"] = True
+        energy = 0
+    elif x.get("energy") is not None:
+        energy = x["energy"]
+    else:
+        energy = parse_energy(full_e, price)
+    total = price + (energy if energy is not None else ENERGY_ASSUMED)
+    if total > MAX_PRICE:  # rozpočet je vrátane energií
+        return False
+    x.update(all_in=all_in, energy=energy, total=total)
     rooms = x.get("rooms")
     if rooms is None:
         # počet izieb neuvedený: ponechať, ak to nevyzerá na izbu, garsónku či dopyt
@@ -662,10 +691,16 @@ def tg_handle_updates():
 
 
 def fmt_listing(x: dict) -> str:
-    price = f"{x['price']} €" if x.get("price") else "cena ?"
-    if x.get("all_in"):
-        price += " vrátane energií"
-    good = " 🔥" if x.get("price") and x["price"] <= GOOD_PRICE else ""
+    if not x.get("price"):
+        price = "cena ?"
+    elif x.get("all_in"):
+        price = f"{x['price']} € vrátane energií"
+    elif x.get("energy") is not None:
+        price = f"{x['price']} € + {x['energy']} € energie = {x['price'] + x['energy']} €"
+    else:
+        price = f"{x['price']} € + energie neuvedené"
+    total = x.get("total") or x.get("price")
+    good = " 🔥" if total and total <= GOOD_PRICE else ""
     rooms = "izby neuvedené" if x.get("rooms") == "?" else f"{x['rooms']} izb."
     bits = [f"<b>{price}{good}</b> · {rooms}"]
     if x.get("area"):
@@ -790,13 +825,15 @@ def main():
     new_items = []
     for lid, x in scraped.items():
         x.pop("text_for_filter", None)
+        x.pop("energy_text", None)
         if lid in merged:
             e = merged[lid]
             old_price = e.get("price")
             price_drop = old_price and x.get("price") and x["price"] < old_price
-            for k in ("title", "desc", "price", "rooms", "area", "location", "url", "image", "posted"):
+            for k in ("title", "desc", "price", "rooms", "area", "location", "url", "image", "posted", "total", "all_in"):
                 if x.get(k) is not None:
                     e[k] = x[k]
+            e["energy"] = x.get("energy")
             if price_drop:
                 e["price_drop_from"] = old_price
                 if not e.get("dup_of") and not first_run:
@@ -876,7 +913,7 @@ def main():
         log(f"Nové/zlacnené: {len(new_items)}")
         if filters_changed and new_items:
             # rozšírené filtre by naraz poslali všetky staršie ponuky, ktoré doteraz neprešli
-            tg_broadcast(f"🔧 Filtre rozšírené (3-izbové, byty bez uvedeného počtu izieb, ceny vrátane energií) – "
+            tg_broadcast(f"🔧 Filtre zmenené (limit {MAX_PRICE} € vrátane energií) – "
                          f"pribudlo {len(new_items)} ponúk, nájdeš ich na webe." + (f"\n{SITE_URL}" if SITE_URL else ""))
             new_items = []
         notify_new(new_items)
