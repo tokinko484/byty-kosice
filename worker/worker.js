@@ -174,7 +174,7 @@ async function callGemini(env, model, system, prompt, ms) {
 async function askGemini(env, question, data) {
   const now = new Date().toLocaleString("sk-SK", { timeZone: "Europe/Bratislava" });
   const system =
-    "Si pomocník páru, ktorý hľadá na prenájom celý 1,5–2-izbový byt v Košiciach do 700 €/mesiac. " +
+    "Si pomocník páru, ktorý hľadá na prenájom celý byt v Košiciach: 2 a 3-izbový do 730 €, 1,5-izbový do 700 € mesačne (vrátane energií). " +
     "Odpovedaj po slovensky, stručne a vecne, obyčajným textom bez Markdownu (žiadne hviezdičky ani #). " +
     "Pri konkrétnych bytoch vždy uveď cenu, počet izieb, lokalitu a celý odkaz (url). " +
     "Vychádzaj LEN z priložených dát; ak niečo v dátach nie je, povedz to. Nevymýšľaj si. " +
