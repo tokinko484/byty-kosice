@@ -29,6 +29,8 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
+import facebook  # Facebook skupiny cez Bright Data + Gemini (scraper/facebook.py)
+
 # ---------------------------------------------------------------- nastavenia
 MAX_PRICE = int(os.getenv("MAX_PRICE", "700"))   # €/mesiac – horná hranica
 GOOD_PRICE = int(os.getenv("GOOD_PRICE", "650"))  # pod touto cenou = „dobrá cena“
@@ -129,7 +131,7 @@ def save_ai_data(listings: list[dict], status: dict):
     import hashlib
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     keep_keys = ("source", "title", "price", "rooms", "area", "location", "url", "first_seen", "active",
-                 "gone_since", "price_drop_from", "also", "desc", "all_in")
+                 "gone_since", "price_drop_from", "also", "desc", "all_in", "available", "contact", "advertiser", "warning")
     items = [{k: (x.get(k)[:200] if k == "desc" and x.get(k) else x.get(k)) for k in keep_keys if x.get(k) not in (None, "", [])}
              for x in listings if not x.get("dup_of")]
     payload = json.dumps({"status": status, "listings": items}, ensure_ascii=False).encode()
@@ -525,6 +527,9 @@ SOURCES = {
     "Bezrealitky": scrape_bezrealitky,
     # "Bazar.sk": scrape_bazar,  # vypnuté 2026-11-21: Bazar.sk blokuje GitHub Actions (RemoteDisconnected)
 }
+if facebook.enabled():
+    SOURCES["Facebook"] = facebook.fetch   # volá sa so stavom: fetch(state, log)
+INCREMENTAL = {"Facebook"}  # vracia len nové príspevky – neoznačovať ostatné ako zmiznuté
 
 
 # ---------------------------------------------------------------- filter
@@ -668,7 +673,14 @@ def fmt_listing(x: dict) -> str:
     lines = [" · ".join(bits), html.escape(x["title"][:150])]
     if x.get("location"):
         lines.append("📍 " + html.escape(x["location"][:80]))
-    lines.append(f"🔎 {x['source']}")
+    if x.get("available"):
+        lines.append("📅 Voľný od: " + html.escape(x["available"][:40]))
+    if x.get("contact"):
+        lines.append("📞 " + html.escape(x["contact"][:60]))
+    if x.get("warning"):
+        lines.append("⚠️ " + html.escape(x["warning"][:120]))
+    src = x["source"] + (f" · {x['advertiser']}" if x.get("advertiser") else "")
+    lines.append(f"🔎 {html.escape(src)}")
     lines.append(f'<a href="{html.escape(x["url"])}">Otvoriť inzerát</a>')
     return "\n".join(lines)
 
@@ -755,7 +767,7 @@ def main():
     for name, fn in SOURCES.items():
         t0 = time.time()
         try:
-            raw = fn()
+            raw = fn(state, log) if name in INCREMENTAL else fn()
             kept = [x for x in raw if keep(x)]
             for x in kept:
                 scraped[x["id"]] = x
@@ -792,6 +804,7 @@ def main():
             e["active"] = True
             e.pop("gone_since", None)
         else:
+            silent = x.pop("silent", False)
             x["first_seen"] = NOW.isoformat(timespec="seconds")
             x["active"] = True
             # ten istý inzerát zmazaný a pridaný nanovo (nové ID na tom istom portáli) = nie je nový
@@ -808,13 +821,20 @@ def main():
                 if all(a["url"] != x["url"] for a in alts):
                     alts.append({"source": x["source"], "url": x["url"]})
             merged[lid] = x
-            if not dup and not repost:
+            if not dup and not repost and not silent:
                 new_items.append(x)
             elif repost:
                 log("Znovu pridaný inzerát – neposielam")
 
     # zmiznuté inzeráty (len pri zdrojoch, ktoré dnes fungovali)
     for lid, e in list(merged.items()):
+        if e["source"] in INCREMENTAL:  # príspevky zo skupín: aktívne ACTIVE_DAYS od pridania
+            if e.get("active", True) and datetime.fromisoformat(e["first_seen"]) < NOW - timedelta(days=facebook.ACTIVE_DAYS):
+                e["active"] = False
+                e["gone_since"] = NOW.isoformat(timespec="seconds")
+            elif e.get("gone_since") and datetime.fromisoformat(e["gone_since"]) < NOW - timedelta(days=KEEP_GONE_DAYS):
+                del merged[lid]
+            continue
         if lid in scraped or e["source"] not in ok_sources:
             continue
         if e.get("active", True):
