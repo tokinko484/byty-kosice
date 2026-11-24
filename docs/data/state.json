@@ -4,15 +4,24 @@
   "Nehnuteľnosti": 0,
   "TopReality": 0,
   "Bezrealitky": 0,
-  "Bazar.sk": 9
+  "Bazar.sk": 9,
+  "Facebook": 0
  },
  "initialized": [
   "Bazar.sk",
   "Bazoš",
   "Bezrealitky",
+  "Facebook",
   "Nehnuteľnosti",
   "TopReality"
  ],
  "max_price": 700,
- "filter_v": 2
+ "filter_v": 3,
+ "fb": {
+  "usage": {},
+  "snapshot": "sd_mwun9fd62krz7o1han",
+  "snapshot_at": "2026-11-24T12:00:59+00:00",
+  "last_trigger": "2026-11-24T12:00:59+00:00",
+  "interval_min": 144
+ }
 }
