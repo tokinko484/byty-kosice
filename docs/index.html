@@ -117,7 +117,7 @@ function render(){
     .filter(x => st.src==='all' || x.source===st.src || (x.also||[]).some(a => a.source===st.src))
     .filter(x => !st.fav || favs.has(x.id))
     .filter(x => !st.hideSeen || !seen.has(x.id));
-  items.sort(st.sort==='price' ? (a,b) => (a.total ?? a.price) - (b.total ?? b.price) : (a,b) => b.first_seen.localeCompare(a.first_seen));
+  items.sort(st.sort==='price' ? (a,b) => (a.total ?? a.price ?? 9999) - (b.total ?? b.price ?? 9999) : (a,b) => b.first_seen.localeCompare(a.first_seen));
   document.getElementById('count').textContent = `${items.length} ponúk`;
   const el = document.getElementById('list');
   if (!items.length){ el.innerHTML = '<div class="empty">Žiadne ponuky pre tento filter.</div>'; return; }
@@ -125,7 +125,7 @@ function render(){
     const isNew = Date.now() - new Date(x.first_seen) < 24*3600e3;
     const badges = [x.active===false ? '<span class="b">zmizol</span>' : '',
       isNew ? '<span class="b new">NOVÉ</span>' : '',
-      (x.total ?? x.price) <= 650 ? '<span class="b good">do 650 €</span>' : '',
+      (x.total ?? x.price ?? 9999) <= 650 ? '<span class="b good">do 650 €</span>' : '',
       x.price_drop_from ? `<span class="b drop">zlacnel z ${x.price_drop_from} €</span>` : '',
       `<span class="b">${esc(x.source)}</span>`].join('');
     const meta = [x.rooms==='?' ? 'izby neuvedené' : `${esc(x.rooms)} izb.`, x.area ? `${x.area} m²` : '', esc(x.location)].filter(Boolean).join(' · ');
@@ -133,7 +133,7 @@ function render(){
     return `<article class="card${seen.has(x.id) ? ' seen' : ''}${x.active===false ? ' gone' : ''}">
       <a class="img" href="${esc(x.url)}" target="_blank" rel="noopener" data-id="${esc(x.id)}" style="${x.image ? `background-image:url('${esc(x.image)}')` : ''}"><div class="badges">${badges}</div></a>
       <div class="body">
-        <div class="price">${x.total ?? x.price} €<span>/ mes. ${x.all_in ? 'vrátane energií' : x.energy != null ? `= ${x.price} € + ${x.energy} € energie` : `= ${x.price} € + energie ? (odhad)`}</span></div>
+        <div class="price">${x.price == null ? 'cena neuvedená' : `${x.total ?? x.price} €`}<span>${x.price == null ? '' : '/ mes. '}${x.price == null ? '' : x.all_in ? 'vrátane energií' : x.energy != null ? `= ${x.price} € + ${x.energy} € energie` : `= ${x.price} € + energie ? (odhad)`}</span></div>
         <div class="title">${esc(x.title)}</div>
         <div class="meta">${meta}</div>
         ${(x.available || x.contact || x.advertiser) ? `<div class="meta">${[x.available ? 'Voľný od ' + esc(x.available) : '', x.contact ? '📞 ' + esc(x.contact) : '', esc(x.advertiser || '')].filter(Boolean).join(' · ')}</div>` : ''}
