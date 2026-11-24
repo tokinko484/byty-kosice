@@ -135,31 +135,53 @@ Príspevky (JSON):
 """
 
 
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+RE_BAD_MODEL = re.compile(r"image|tts|audio|live|embedding|vision|8b")
+
+
+def _more_models(known: list[str]) -> list[str]:
+    """Ďalšie dostupné Flash modely z API (záloha, keď sú hlavné preťažené)."""
+    try:
+        r = requests.get(GEMINI_URL + "?pageSize=200", headers={"x-goog-api-key": GEMINI_KEY}, timeout=20)
+        names = [m["name"].split("/")[-1] for m in r.json().get("models", [])
+                 if "generateContent" in m.get("supportedGenerationMethods", [])]
+    except Exception:  # noqa: BLE001
+        return []
+    flash = [n for n in names if "flash" in n and not RE_BAD_MODEL.search(n) and n not in known]
+    flash.sort(key=lambda n: ("preview" in n or "exp" in n, "lite" not in n, n), reverse=False)
+    return flash[:4]
+
+
 def gemini_extract(posts: list[dict]) -> dict[str, dict]:
     payload = [{"id": p["id"], "text": p["text"][:1800]} for p in posts]
     body = {
         "contents": [{"role": "user", "parts": [{"text": PROMPT + json.dumps(payload, ensure_ascii=False)}]}],
         "generationConfig": {"temperature": 0, "responseMimeType": "application/json", "responseSchema": SCHEMA},
     }
-    last = None
-    for model in GEMINI_MODELS:
-        for attempt in range(2):
+    deadline = time.time() + int(os.getenv("GEMINI_MAX_S", "240"))
+    models, tried, errors = list(GEMINI_MODELS), set(), []
+    while models and time.time() < deadline:
+        model = models.pop(0)
+        tried.add(model)
+        for attempt in range(3):
+            if time.time() > deadline:
+                break
             try:
-                r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                r = requests.post(f"{GEMINI_URL}/{model}:generateContent",
                                   headers={"x-goog-api-key": GEMINI_KEY}, json=body, timeout=90)
-                if r.status_code != 200:
-                    last = f"{model} HTTP {r.status_code}"
-                    if r.status_code in (429, 500, 503):
-                        time.sleep(8 * (attempt + 1))
-                        continue
-                    break
-                parts = (((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or [{}])
-                items = json.loads(parts[0].get("text") or "[]")
-                return {str(i.get("id")): i for i in items if isinstance(i, dict)}
-            except (requests.RequestException, ValueError) as e:  # noqa: PERF203
-                last = f"{model} {type(e).__name__}"
-                time.sleep(5)
-    raise RuntimeError(f"Gemini zlyhal ({last})")
+                if r.status_code == 200:
+                    parts = (((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or [{}])
+                    items = json.loads(parts[0].get("text") or "[]")
+                    return {str(i.get("id")): i for i in items if isinstance(i, dict)}
+                errors.append(f"{model} HTTP {r.status_code}")
+                if r.status_code not in (429, 500, 502, 503, 504):
+                    break  # chyba modelu/požiadavky → skúsiť iný model
+            except (requests.RequestException, ValueError) as e:
+                errors.append(f"{model} {type(e).__name__}")
+            time.sleep(10 * (attempt + 1))  # preťaženie býva krátke
+        if not models and not tried - set(GEMINI_MODELS):
+            models = _more_models(list(tried))
+    raise RuntimeError(f"Gemini zlyhal ({', '.join(dict.fromkeys(errors[-4:])) or 'časový limit'})")
 
 
 # ---------------------------------------------------------------- spracovanie
@@ -286,7 +308,9 @@ def process(records: list[dict], fb: dict, log) -> list[dict]:
 
 
 def fetch(state: dict, log) -> list[dict]:
-    """Volá sa z hlavného behu ako zdroj. Vracia len NOVÉ ponuky (inkrementálny zdroj)."""
+    """Volá sa z hlavného behu ako zdroj. Vracia len NOVÉ ponuky (inkrementálny zdroj).
+    Hotové snapshoty, ktoré sa nepodarilo spracovať (napr. Gemini preťažené), čakajú vo fronte
+    a skúšajú sa pri každom behu – zber nových snapshotov medzitým pokračuje, nič sa nestratí."""
     if not enabled():
         raise RuntimeError("chýba BRIGHTDATA_TOKEN alebo GEMINI_API_KEY")
     fb = state.setdefault("fb", {})
@@ -294,52 +318,91 @@ def fetch(state: dict, log) -> list[dict]:
     usage = fb.setdefault("usage", {})
     for k in [k for k in usage if k != month]:
         usage.pop(k)
+    if month == "2026-11" and not fb.get("usage_fix_1"):  # opakované pokusy omylom násobili spotrebu
+        usage[month] = 33
+        fb["usage_fix_1"] = True
+    queue: list[str] = fb.setdefault("queue", [])        # hotové, ešte nespracované snapshoty
+    counted: list[str] = fb.setdefault("counted", [])    # snapshoty už započítané do limitu
     out: list[dict] = []
+    errors: list[str] = []
 
-    def collect(sid: str) -> bool:
+    def handle(sid: str) -> bool:
+        """Stiahne a spracuje hotový snapshot. True = hotovo (alebo zahodený), False = skúsiť neskôr."""
+        try:
+            records = bd_download(sid)
+        except RuntimeError as e:
+            if "HTTP 404" in str(e) or "HTTP 410" in str(e):
+                log(f"Facebook: snapshot {sid} už neexistuje, zahadzujem")
+                return True
+            errors.append(str(e))
+            return False
+        if sid not in counted:
+            usage[month] = usage.get(month, 0) + len(records)
+            counted.append(sid)
+            del counted[:-30]
+            fb["last_count"] = len(records)
+        try:
+            out.extend(process(records, fb, log))
+            return True
+        except RuntimeError as e:
+            errors.append(str(e))
+            log(f"Facebook: spracovanie odložené ({e}) – skúsim pri ďalšom behu")
+            return False
+
+    # 1) najprv fronta nespracovaných snapshotov (najstarší prvý)
+    for sid in list(queue):
+        if handle(sid):
+            queue.remove(sid)
+        else:
+            break  # Gemini stále nejde – ostatné nechať na neskôr
+
+    # 2) bežiaci snapshot z minulého behu
+    if fb.get("snapshot"):
+        sid = fb["snapshot"]
         st = bd_status(sid)
         if st == "ready":
-            records = bd_download(sid)
-            usage[month] = usage.get(month, 0) + len(records)
-            fb["last_count"] = len(records)
-            out.extend(process(records, fb, log))
-            fb.pop("snapshot", None)
-            return True
-        if st in ("failed", "error", "canceled", "cancelled"):
-            fb.pop("snapshot", None)
-            raise RuntimeError(f"Bright Data snapshot {st}")
-        return False
+            fb.pop("snapshot")
+            if queue or not handle(sid):
+                queue.append(sid) if sid not in queue else None
+        elif st in ("failed", "error", "canceled", "cancelled"):
+            fb.pop("snapshot")
+            errors.append(f"Bright Data snapshot {st}")
+        elif NOW - datetime.fromisoformat(fb.get("snapshot_at", NOW.isoformat())) > timedelta(hours=2):
+            log("Facebook: snapshot visí > 2 h, zahadzujem")
+            fb.pop("snapshot")
+        else:
+            log("Facebook: snapshot ešte nie je hotový")
 
-    # 1) dokončiť snapshot z minulého behu
-    if fb.get("snapshot"):
-        if not collect(fb["snapshot"]):
-            started = datetime.fromisoformat(fb.get("snapshot_at", NOW.isoformat()))
-            if NOW - started > timedelta(hours=2):
-                log("Facebook: snapshot visí > 2 h, zahadzujem")
-                fb.pop("snapshot", None)
-            else:
-                log("Facebook: snapshot ešte nie je hotový")
-            return out
-
-    # 2) nový snapshot, ak uplynul interval a je rozpočet
+    # 3) nový snapshot, ak uplynul interval a je rozpočet (aj keď fronta čaká – zber nesmie stáť)
     n = fb.get("n", {})
     planned = sum(n.get(g, GROUPS[g]) for g in FB_GROUPS)
     per_run = max(1, planned if not fb.get("no_num_posts") else (fb.get("last_count") or 15 * len(FB_GROUPS)))
     interval = max(MIN_INTERVAL_MIN, math.ceil(30 * 24 * 60 * per_run / MONTHLY_BUDGET))
     last = fb.get("last_trigger")
-    due = not last or NOW - datetime.fromisoformat(last) >= timedelta(minutes=interval - 2)
-    if not due:
-        return out
-    if usage.get(month, 0) + per_run > MONTHLY_BUDGET:
+    due = not fb.get("snapshot") and (not last or NOW - datetime.fromisoformat(last) >= timedelta(minutes=interval - 2))
+    if due and usage.get(month, 0) + per_run * (1 + len(queue)) > MONTHLY_BUDGET:
         log(f"Facebook: mesačný limit {MONTHLY_BUDGET} záznamov vyčerpaný ({usage.get(month, 0)}) – čakám na ďalší mesiac")
-        return out
-    sid = bd_trigger(fb, log)
-    fb.update(snapshot=sid, snapshot_at=NOW.isoformat(timespec="seconds"), last_trigger=NOW.isoformat(timespec="seconds"),
-              interval_min=interval)
-    log(f"Facebook: spustený snapshot (interval {interval} min, tento mesiac {usage.get(month, 0)} záznamov)")
-    t0 = time.time()
-    while time.time() - t0 < WAIT_READY_S:
-        time.sleep(15)
-        if collect(sid):
-            break
+    elif due:
+        sid = bd_trigger(fb, log)
+        fb.update(snapshot=sid, snapshot_at=NOW.isoformat(timespec="seconds"),
+                  last_trigger=NOW.isoformat(timespec="seconds"), interval_min=interval)
+        log(f"Facebook: spustený snapshot (interval {interval} min, tento mesiac {usage.get(month, 0)} záznamov)")
+        t0 = time.time()
+        while time.time() - t0 < WAIT_READY_S:
+            time.sleep(15)
+            st = bd_status(sid)
+            if st == "ready":
+                fb.pop("snapshot")
+                if queue or not handle(sid):
+                    queue.append(sid) if sid not in queue else None
+                break
+            if st in ("failed", "error", "canceled", "cancelled"):
+                fb.pop("snapshot")
+                errors.append(f"Bright Data snapshot {st}")
+                break
+
+    if queue:
+        log(f"Facebook: {len(queue)} snapshot(y) čaká na spracovanie (príspevky sú uložené v Bright Data)")
+    if errors and not out:
+        raise RuntimeError(errors[-1])
     return out
