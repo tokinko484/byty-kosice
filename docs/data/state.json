@@ -19,12 +19,12 @@
  "filter_v": 4,
  "fb": {
   "usage": {
-   "2026-11": 220
+   "2026-11": 243
   },
   "snapshot_at": "2026-11-25T22:45:41+00:00",
   "last_trigger": "2026-11-25T22:45:41+00:00",
   "interval_min": 221,
-  "last_count": 21,
+  "last_count": 23,
   "seen": [
    "2287927591771024",
    "2288229525074164",
@@ -56,6 +56,11 @@
    "2290051394891977",
    "2290077691556014",
    "2290077891555994",
+   "2290121131551670",
+   "2290149258215524",
+   "2290164511547332",
+   "2290175281546255",
+   "2290220268208423",
    "2751505731932834",
    "2752946901788717",
    "2754261978342946",
@@ -85,9 +90,12 @@
    "2758372331265244",
    "2758460631256414",
    "2758600954575715",
+   "2758961481206329",
    "2774751259608281",
    "2777249669358440",
    "2778138729269534",
+   "2779538049129602",
+   "2780351659048241",
    "3404002149990292",
    "3404140176643156",
    "3404184476638726",
@@ -109,7 +117,7 @@
   "n": {
    "https://www.facebook.com/groups/rentflatkosice/": 4,
    "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 5,
-   "https://www.facebook.com/groups/575297962860739/": 6,
+   "https://www.facebook.com/groups/575297962860739/": 5,
    "https://www.facebook.com/groups/449027048994430/": 8
   },
   "primed_groups": [
@@ -129,15 +137,15 @@
    "sd_mwvw9ngn2rer9nxme9",
    "sd_mww3873u1yzx6rtvd5",
    "sd_mwwa75pj2c7fqjbby6",
-   "sd_mwwhpd7c12u8r5u2wn"
+   "sd_mwwhpd7c12u8r5u2wn",
+   "sd_mwwpq2v82k1ss6wwto"
   ],
   "rate": {
-   "https://www.facebook.com/groups/rentflatkosice/": 0.94,
-   "https://www.facebook.com/groups/449027048994430/": 2.99,
-   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 0.9,
-   "https://www.facebook.com/groups/575297962860739/": 1.84
-  },
-  "snapshot": "sd_mwwpq2v82k1ss6wwto"
+   "https://www.facebook.com/groups/rentflatkosice/": 0.96,
+   "https://www.facebook.com/groups/449027048994430/": 3.59,
+   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 1.23,
+   "https://www.facebook.com/groups/575297962860739/": 1.29
+  }
  },
  "backfill_20261124": true,
  "tg_pending": {}
