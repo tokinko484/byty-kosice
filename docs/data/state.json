@@ -19,12 +19,12 @@
  "filter_v": 4,
  "fb": {
   "usage": {
-   "2026-11": 180
+   "2026-11": 199
   },
   "snapshot_at": "2026-11-25T15:30:56+00:00",
   "last_trigger": "2026-11-25T15:30:56+00:00",
   "interval_min": 183,
-  "last_count": 20,
+  "last_count": 19,
   "seen": [
    "2287927591771024",
    "2288229525074164",
@@ -51,6 +51,7 @@
    "2289668411596942",
    "2289674704929646",
    "2289729021590881",
+   "2289782471585536",
    "2751505731932834",
    "2752946901788717",
    "2754261978342946",
@@ -79,6 +80,7 @@
    "2758311324604678",
    "2758372331265244",
    "2758460631256414",
+   "2758600954575715",
    "3404002149990292",
    "3404140176643156",
    "3404184476638726",
@@ -88,13 +90,17 @@
    "3405711183152722",
    "3405722133151627",
    "3405727489817758",
-   "3405736133150227"
+   "3405736133150227",
+   "3405831669807340",
+   "3405867189803788",
+   "3405868179803689",
+   "3405915183132322"
   ],
   "primed": true,
   "n": {
    "https://www.facebook.com/groups/rentflatkosice/": 4,
    "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 3,
-   "https://www.facebook.com/groups/575297962860739/": 4,
+   "https://www.facebook.com/groups/575297962860739/": 6,
    "https://www.facebook.com/groups/449027048994430/": 8
   },
   "primed_groups": [
@@ -112,15 +118,15 @@
    "sd_mwvgpzh6bfrzwlfm9",
    "sd_mwvorbsa1gbxavr7k",
    "sd_mwvw9ngn2rer9nxme9",
-   "sd_mww3873u1yzx6rtvd5"
+   "sd_mww3873u1yzx6rtvd5",
+   "sd_mwwa75pj2c7fqjbby6"
   ],
   "rate": {
-   "https://www.facebook.com/groups/rentflatkosice/": 1.48,
-   "https://www.facebook.com/groups/449027048994430/": 3.23,
+   "https://www.facebook.com/groups/rentflatkosice/": 1.34,
+   "https://www.facebook.com/groups/449027048994430/": 2.56,
    "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 0.0,
-   "https://www.facebook.com/groups/575297962860739/": 0.82
-  },
-  "snapshot": "sd_mwwa75pj2c7fqjbby6"
+   "https://www.facebook.com/groups/575297962860739/": 1.77
+  }
  },
  "backfill_20261124": true,
  "tg_pending": {}
