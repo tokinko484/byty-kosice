@@ -19,12 +19,12 @@
  "filter_v": 4,
  "fb": {
   "usage": {
-   "2026-11": 199
+   "2026-11": 220
   },
-  "snapshot_at": "2026-11-25T15:30:56+00:00",
-  "last_trigger": "2026-11-25T15:30:56+00:00",
-  "interval_min": 183,
-  "last_count": 19,
+  "snapshot_at": "2026-11-25T19:01:02+00:00",
+  "last_trigger": "2026-11-25T19:01:02+00:00",
+  "interval_min": 202,
+  "last_count": 21,
   "seen": [
    "2287927591771024",
    "2288229525074164",
@@ -52,6 +52,10 @@
    "2289674704929646",
    "2289729021590881",
    "2289782471585536",
+   "2290010568229393",
+   "2290051394891977",
+   "2290077691556014",
+   "2290077891555994",
    "2751505731932834",
    "2752946901788717",
    "2754261978342946",
@@ -81,6 +85,9 @@
    "2758372331265244",
    "2758460631256414",
    "2758600954575715",
+   "2774751259608281",
+   "2777249669358440",
+   "2778138729269534",
    "3404002149990292",
    "3404140176643156",
    "3404184476638726",
@@ -94,12 +101,14 @@
    "3405831669807340",
    "3405867189803788",
    "3405868179803689",
-   "3405915183132322"
+   "3405915183132322",
+   "3406245299765977",
+   "3406477133076127"
   ],
   "primed": true,
   "n": {
    "https://www.facebook.com/groups/rentflatkosice/": 4,
-   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 3,
+   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 5,
    "https://www.facebook.com/groups/575297962860739/": 6,
    "https://www.facebook.com/groups/449027048994430/": 8
   },
@@ -119,13 +128,14 @@
    "sd_mwvorbsa1gbxavr7k",
    "sd_mwvw9ngn2rer9nxme9",
    "sd_mww3873u1yzx6rtvd5",
-   "sd_mwwa75pj2c7fqjbby6"
+   "sd_mwwa75pj2c7fqjbby6",
+   "sd_mwwhpd7c12u8r5u2wn"
   ],
   "rate": {
-   "https://www.facebook.com/groups/rentflatkosice/": 1.34,
-   "https://www.facebook.com/groups/449027048994430/": 2.56,
-   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 0.0,
-   "https://www.facebook.com/groups/575297962860739/": 1.77
+   "https://www.facebook.com/groups/rentflatkosice/": 0.94,
+   "https://www.facebook.com/groups/449027048994430/": 2.99,
+   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 0.9,
+   "https://www.facebook.com/groups/575297962860739/": 1.84
   }
  },
  "backfill_20261124": true,
