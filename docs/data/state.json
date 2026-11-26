@@ -21,9 +21,9 @@
   "usage": {
    "2026-11": 352
   },
-  "snapshot_at": "2026-11-26T19:15:41+00:00",
-  "last_trigger": "2026-11-26T19:15:41+00:00",
-  "interval_min": 183,
+  "snapshot_at": "2026-11-26T23:45:37+00:00",
+  "last_trigger": "2026-11-26T23:45:37+00:00",
+  "interval_min": 260,
   "last_count": 19,
   "seen": [
    "2287927591771024",
@@ -186,7 +186,8 @@
    "https://www.facebook.com/groups/449027048994430/": 3.98,
    "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 0.2,
    "https://www.facebook.com/groups/575297962860739/": 3.02
-  }
+  },
+  "snapshot": "sd_mwy7b3w828qn9w3hqz"
  },
  "backfill_20261124": true,
  "tg_pending": {}
