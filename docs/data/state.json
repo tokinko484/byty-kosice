@@ -19,12 +19,12 @@
  "filter_v": 4,
  "fb": {
   "usage": {
-   "2026-11": 288
+   "2026-11": 309
   },
   "snapshot_at": "2026-11-26T09:30:50+00:00",
   "last_trigger": "2026-11-26T09:30:50+00:00",
   "interval_min": 202,
-  "last_count": 23,
+  "last_count": 21,
   "seen": [
    "2287927591771024",
    "2288229525074164",
@@ -61,6 +61,9 @@
    "2290164511547332",
    "2290175281546255",
    "2290220268208423",
+   "2290565028173947",
+   "2290673958163054",
+   "2290705401493243",
    "2751505731932834",
    "2752946901788717",
    "2754261978342946",
@@ -101,6 +104,7 @@
    "3404184476638726",
    "3404220553301785",
    "3405114203212420",
+   "3405282359862271",
    "3405708133153027",
    "3405711183152722",
    "3405722133151627",
@@ -118,12 +122,14 @@
    "3407034486353725",
    "3407064719684035",
    "3407129529677554",
-   "3407134323010408"
+   "3407134323010408",
+   "3407691402954700",
+   "3407787739611733"
   ],
   "primed": true,
   "n": {
    "https://www.facebook.com/groups/rentflatkosice/": 3,
-   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 4,
+   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 3,
    "https://www.facebook.com/groups/575297962860739/": 7,
    "https://www.facebook.com/groups/449027048994430/": 7
   },
@@ -147,15 +153,15 @@
    "sd_mwwhpd7c12u8r5u2wn",
    "sd_mwwpq2v82k1ss6wwto",
    "sd_mwwx86kx1v3i4fsfj4",
-   "sd_mwx59vjq190v8ad5m7"
+   "sd_mwx59vjq190v8ad5m7",
+   "sd_mwxcru5f213tkix4vz"
   ],
   "rate": {
-   "https://www.facebook.com/groups/rentflatkosice/": 0.47,
-   "https://www.facebook.com/groups/449027048994430/": 1.76,
-   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 0.6,
-   "https://www.facebook.com/groups/575297962860739/": 2.28
-  },
-  "snapshot": "sd_mwxcru5f213tkix4vz"
+   "https://www.facebook.com/groups/rentflatkosice/": 0.33,
+   "https://www.facebook.com/groups/449027048994430/": 2.13,
+   "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 0.42,
+   "https://www.facebook.com/groups/575297962860739/": 2.5
+  }
  },
  "backfill_20261124": true,
  "tg_pending": {}
