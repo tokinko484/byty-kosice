@@ -19,12 +19,12 @@
  "filter_v": 4,
  "fb": {
   "usage": {
-   "2026-11": 329
+   "2026-11": 333
   },
-  "snapshot_at": "2026-11-26T12:45:40+00:00",
-  "last_trigger": "2026-11-26T12:45:40+00:00",
-  "interval_min": 192,
-  "last_count": 20,
+  "snapshot_at": "2026-11-26T16:01:05+00:00",
+  "last_trigger": "2026-11-26T16:01:05+00:00",
+  "interval_min": 183,
+  "last_count": 4,
   "seen": [
    "2287927591771024",
    "2288229525074164",
@@ -161,7 +161,8 @@
    "sd_mwwx86kx1v3i4fsfj4",
    "sd_mwx59vjq190v8ad5m7",
    "sd_mwxcru5f213tkix4vz",
-   "sd_mwxjqh7t8djpvypdw"
+   "sd_mwxjqh7t8djpvypdw",
+   "sd_mwxqpvv8q5neq8qt5"
   ],
   "rate": {
    "https://www.facebook.com/groups/rentflatkosice/": 0.83,
