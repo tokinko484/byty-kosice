@@ -19,12 +19,12 @@
  "filter_v": 4,
  "fb": {
   "usage": {
-   "2026-11": 449
+   "2026-11": 453
   },
   "snapshot_at": "2026-11-27T19:15:42+00:00",
   "last_trigger": "2026-11-27T19:15:42+00:00",
   "interval_min": 231,
-  "last_count": 21,
+  "last_count": 4,
   "seen": [
    "2287927591771024",
    "2288229525074164",
@@ -199,15 +199,15 @@
    "sd_mwy7b3w828qn9w3hqz",
    "sd_mwygfhle20gajq60vo",
    "sd_mwyogmmwi029irwj",
-   "sd_mwyvypld1c4idrmmqi"
+   "sd_mwyvypld1c4idrmmqi",
+   "sd_mwzd410zn1oypimaw"
   ],
   "rate": {
    "https://www.facebook.com/groups/rentflatkosice/": 0.76,
    "https://www.facebook.com/groups/449027048994430/": 4.18,
    "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 0.05,
    "https://www.facebook.com/groups/575297962860739/": 0.73
-  },
-  "snapshot": "sd_mwzd410zn1oypimaw"
+  }
  },
  "backfill_20261124": true,
  "tg_pending": {}
