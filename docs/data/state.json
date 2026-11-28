@@ -19,12 +19,12 @@
  "filter_v": 4,
  "fb": {
   "usage": {
-   "2026-11": 528
+   "2026-11": 551
   },
-  "snapshot_at": "2026-11-28T07:30:49+00:00",
-  "last_trigger": "2026-11-28T07:30:49+00:00",
-  "interval_min": 240,
-  "last_count": 25,
+  "snapshot_at": "2026-11-28T11:15:41+00:00",
+  "last_trigger": "2026-11-28T11:15:41+00:00",
+  "interval_min": 221,
+  "last_count": 23,
   "seen": [
    "2287927591771024",
    "2288229525074164",
@@ -100,6 +100,11 @@
    "2292384367992013",
    "2292473894649727",
    "2292476267982823",
+   "2292805671283216",
+   "2292862891277494",
+   "2292874997942950",
+   "2292922851271498",
+   "2292966554600461",
    "2751505731932834",
    "2752946901788717",
    "2754261978342946",
@@ -142,6 +147,10 @@
    "2761418817627262",
    "2761497134286097",
    "2761508454284965",
+   "2762038757565268",
+   "2762055070896970",
+   "2762063604229450",
+   "2762081494227661",
    "2774751259608281",
    "2777249669358440",
    "2778138729269534",
@@ -186,8 +195,8 @@
   "n": {
    "https://www.facebook.com/groups/rentflatkosice/": 5,
    "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 3,
-   "https://www.facebook.com/groups/575297962860739/": 4,
-   "https://www.facebook.com/groups/449027048994430/": 11
+   "https://www.facebook.com/groups/575297962860739/": 3,
+   "https://www.facebook.com/groups/449027048994430/": 10
   },
   "primed_groups": [
    "https://www.facebook.com/groups/rentflatkosice/",
@@ -221,13 +230,14 @@
    "sd_mwzd410zn1oypimaw",
    "sd_mwzlokwh1tmpggqd9j",
    "sd_mwzusffu1pd7ep50t6",
-   "sd_mx03d2u91lf4mrfwnm"
+   "sd_mx03d2u91lf4mrfwnm",
+   "sd_mx0bedjx270g151061"
   ],
   "rate": {
-   "https://www.facebook.com/groups/rentflatkosice/": 1.06,
-   "https://www.facebook.com/groups/449027048994430/": 3.18,
+   "https://www.facebook.com/groups/rentflatkosice/": 1.94,
+   "https://www.facebook.com/groups/449027048994430/": 3.73,
    "https://www.facebook.com/groups/byvanieaprenajomKOSICE/": 0.01,
-   "https://www.facebook.com/groups/575297962860739/": 0.55
+   "https://www.facebook.com/groups/575297962860739/": 0.39
   }
  },
  "backfill_20261124": true,
